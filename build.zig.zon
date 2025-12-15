@@ -31,6 +31,7 @@
         "LICENSE",
         "README.md",
         "gdzig",
+        "gdzig_common",
         "gdzig_bindgen",
         "gdzig_test",
         "tests",
