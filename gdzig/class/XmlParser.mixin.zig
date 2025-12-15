@@ -1,4 +1,4 @@
-/// Opens a raw XML buffer on this XMLParser instance.
+/// Opens a raw XML buffer on this XmlParser instance.
 ///
 /// - **buf**: A slice containing the buffer data.
 ///
@@ -9,7 +9,7 @@ pub inline fn openBuf(self: *Self, buf: []const u8) void {
 
 // @mixin stop
 
-const Self = gdzig.class.XMLParser;
+const Self = gdzig.class.XmlParser;
 
 const gdzig = @import("gdzig");
 const raw = &gdzig.raw;

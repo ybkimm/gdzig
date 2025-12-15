@@ -131,7 +131,7 @@ pub fn fromApi(allocator: Allocator, api: GodotApi.Builtin, ctx: *const Context)
 }
 
 pub fn loadMixinIfExists(self: *Builtin, allocator: Allocator, input_dir: std.fs.Dir) !void {
-    const mixin_file_path = try std.fmt.allocPrint(allocator, "builtin/{s}.mixin.zig", .{self.name_api});
+    const mixin_file_path = try std.fmt.allocPrint(allocator, "builtin/{s}.mixin.zig", .{self.name});
     defer allocator.free(mixin_file_path);
 
     const file = input_dir.openFile(mixin_file_path, .{}) catch |err| {

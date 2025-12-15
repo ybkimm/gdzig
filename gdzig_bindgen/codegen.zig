@@ -1010,8 +1010,7 @@ fn writeClassMixins(w: *CodeWriter, class: *const Context.Class, ctx: *const Con
     if (class.getBasePtr(ctx)) |parent| {
         try writeClassMixins(w, parent, ctx);
     }
-    // Then write this class's mixin (mixin files use API names)
-    try writeMixin(w, "class/{s}.mixin.zig", .{class.name_api}, ctx);
+    try writeMixin(w, "class/{s}.mixin.zig", .{class.name}, ctx);
 }
 
 fn writeMixin(w: *CodeWriter, comptime fmt: []const u8, args: anytype, ctx: *const Context) !void {

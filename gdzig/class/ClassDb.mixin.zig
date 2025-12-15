@@ -921,7 +921,7 @@ pub const PropertyInfo = extern struct {
 // Registration Functions
 //
 
-/// Registers an extension class in the ClassDB.
+/// Registers an extension class in the ClassDb.
 ///
 /// @since 4.1
 pub inline fn registerClass1(
@@ -963,7 +963,7 @@ pub inline fn registerClass1(
     );
 }
 
-/// Registers an extension class in the ClassDB.
+/// Registers an extension class in the ClassDb.
 ///
 /// @since 4.2
 pub inline fn registerClass2(
@@ -1012,7 +1012,7 @@ pub inline fn registerClass2(
     );
 }
 
-/// Registers an extension class in the ClassDB.
+/// Registers an extension class in the ClassDb.
 ///
 /// @since 4.3
 pub inline fn registerClass3(
@@ -1062,7 +1062,7 @@ pub inline fn registerClass3(
     );
 }
 
-/// Registers an extension class in the ClassDB.
+/// Registers an extension class in the ClassDb.
 ///
 /// @since 4.4
 pub inline fn registerClass4(
@@ -1112,7 +1112,7 @@ pub inline fn registerClass4(
     );
 }
 
-/// Registers a method on an extension class in the ClassDB.
+/// Registers a method on an extension class in the ClassDb.
 ///
 /// @since 4.1
 pub inline fn registerMethod(
@@ -1145,7 +1145,7 @@ pub inline fn registerMethod(
     );
 }
 
-/// Registers a signal on an extension class in the ClassDB.
+/// Registers a signal on an extension class in the ClassDb.
 ///
 /// @since 4.1
 pub inline fn registerSignal(class_name: *const StringName, signal_name: *const StringName, argument_info: []const PropertyInfo) void {
@@ -1158,7 +1158,7 @@ pub inline fn registerSignal(class_name: *const StringName, signal_name: *const 
     );
 }
 
-/// Registers a property on an extension class in the ClassDB.
+/// Registers a property on an extension class in the ClassDb.
 ///
 /// @since 4.1
 pub inline fn registerProperty(class_name: *const StringName, info: *const PropertyInfo, setter: *const StringName, getter: *const StringName) void {
@@ -1171,7 +1171,7 @@ pub inline fn registerProperty(class_name: *const StringName, info: *const Prope
     );
 }
 
-/// Registers an indexed property on an extension class in the ClassDB.
+/// Registers an indexed property on an extension class in the ClassDb.
 ///
 /// @since 4.2
 pub inline fn registerPropertyIndexed(class_name: *const StringName, info: *const PropertyInfo, setter: *const StringName, getter: *const StringName, index: i64) void {
@@ -1186,7 +1186,7 @@ pub inline fn registerPropertyIndexed(class_name: *const StringName, info: *cons
     );
 }
 
-/// Registers a property group on an extension class in the ClassDB.
+/// Registers a property group on an extension class in the ClassDb.
 ///
 /// @since 4.1
 pub inline fn registerPropertyGroup(class_name: *const StringName, group_name: *const String, prefix: *const String) void {
@@ -1198,7 +1198,7 @@ pub inline fn registerPropertyGroup(class_name: *const StringName, group_name: *
     );
 }
 
-/// Registers a property subgroup on an extension class in the ClassDB.
+/// Registers a property subgroup on an extension class in the ClassDb.
 ///
 /// @since 4.1
 pub inline fn registerPropertySubgroup(class_name: *const StringName, subgroup_name: *const String, prefix: *const String) void {
@@ -1210,7 +1210,7 @@ pub inline fn registerPropertySubgroup(class_name: *const StringName, subgroup_n
     );
 }
 
-/// Registers an integer constant on an extension class in the ClassDB.
+/// Registers an integer constant on an extension class in the ClassDb.
 ///
 /// @since 4.1
 pub inline fn registerIntegerConstant(class_name: *const StringName, enum_name: *const StringName, constant_name: *const StringName, constant_value: i64, is_bitfield: bool) void {
@@ -1234,7 +1234,7 @@ pub const VirtualMethodInfo = struct {
     arguments_metadata: []const MethodArgumentMetadata = &.{},
 };
 
-/// Registers a virtual method on an extension class in the ClassDB.
+/// Registers a virtual method on an extension class in the ClassDb.
 /// This allows scripts or other extensions to implement the method.
 ///
 /// @since 4.3
@@ -1255,7 +1255,7 @@ pub inline fn registerVirtualMethod(class_name: *const StringName, info: Virtual
     );
 }
 
-/// Unregisters an extension class in the ClassDB.
+/// Unregisters an extension class in the ClassDb.
 ///
 /// @since 4.1
 pub inline fn unregisterClass(class_name: *const StringName) void {
