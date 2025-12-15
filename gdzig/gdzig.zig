@@ -28,8 +28,10 @@ pub const registerMethod = register.registerMethod;
 pub const registerSignal = register.registerSignal;
 pub const InitializationLevel = register.InitializationLevel;
 
+const DispatchTable = @import("DispatchTable.zig");
+
 /// Godot function pointers, populated at load time.
-pub var raw: @import("DispatchTable.zig") = undefined;
+pub var raw: DispatchTable = undefined;
 
 /// The current running version of Godot, initialized during extension initialization.
 pub var version: Version = undefined;
