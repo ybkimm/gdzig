@@ -170,7 +170,7 @@ fn generateProject(
 
     _ = project.add("test.gdextension", b.fmt(
         \\[configuration]
-        \\compatibility_minimum = "4.2.0"
+        \\compatibility_minimum = "4.1.0"
         \\entry_symbol = "gdzig_test_entry"
         \\
         \\[libraries]
