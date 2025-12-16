@@ -210,7 +210,15 @@ fn generateProject(
     }
 
     _ = project.add(".godot/extension_list.cfg", "res://test.gdextension\n");
-    _ = project.addCopyFile(lib.getEmittedBin(), b.fmt("lib/libtest_{s}.so", .{name}));
+
+    const target = lib.rootModuleTarget();
+    const lib_name = switch (target.os.tag) {
+        .linux => b.fmt("lib/libtest_{s}.so", .{name}),
+        .macos => b.fmt("lib/libtest_{s}.dylib", .{name}),
+        .windows => b.fmt("lib/test_{s}.dll", .{name}),
+        else => @panic("Unsupported OS"),
+    };
+    _ = project.addCopyFile(lib.getEmittedBin(), lib_name);
 
     return project;
 }
