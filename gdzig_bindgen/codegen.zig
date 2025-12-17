@@ -501,7 +501,7 @@ fn writeClassFunction(w: *CodeWriter, class: *const Context.Class, function: *co
 /// Writes a thin vararg wrapper that does comptime check and delegates to the Alloc version.
 fn writeClassFunctionVarargWrapper(w: *CodeWriter, class: *const Context.Class, function: *const Context.Function, ctx: *const Context) !void {
     try w.writeLine(
-        \\/// Guarantees no allocations when calling across the FFI. Passing Transform2d, Aabb, Basis, Transform3d, or Projection is a compile error; use the Alloc variant.
+        \\/// Guarantees no allocations when calling across the FFI. Passing packed arrays is a compile error; use the Alloc variant.
         \\///
     );
     try writeDocBlock(w, function.doc);
@@ -541,7 +541,7 @@ fn writeClassFunctionVarargWrapper(w: *CodeWriter, class: *const Context.Class, 
     try w.printLine(
         \\inline for (0..@"...".len) |_i| {{
         \\    if (@TypeOf(@"..."[_i]) != Variant and comptime Variant.Tag.allocatesForType(@TypeOf(@"..."[_i]))) {{
-        \\        @compileError(@typeName(@TypeOf(@"..."[_i])) ++ " allocates as Variant; use {s}Alloc() or pass a Variant instead.");
+        \\        @compileError(@typeName(@TypeOf(@"..."[_i])) ++ " requires allocation; use {s}Alloc() or pass a Variant instead.");
         \\    }}
         \\}}
     , .{function.name});
@@ -574,7 +574,7 @@ fn writeClassFunctionVarargWrapper(w: *CodeWriter, class: *const Context.Class, 
 /// Writes the allocating version of a vararg function that does the actual FFI call.
 fn writeFunctionAlloc(w: *CodeWriter, function: *const Context.Function, class: ?*const Context.Class, ctx: *const Context) !void {
     try w.writeLine(
-        \\/// Will necessarily allocate when calling across the FFI with Transform2d, Aabb, Basis, Transform3d, or Projection.
+        \\/// Will allocate when calling across the FFI with packed arrays.
         \\///
     );
     try writeDocBlock(w, function.doc);
@@ -635,37 +635,56 @@ fn writeFunctionAlloc(w: *CodeWriter, function: *const Context.Function, class: 
     // Build pointer array to stack-temporary Variants
     try w.printLine("var args: [{d} + @\"...\".len]*Variant = undefined;", .{param_count});
 
-    // Fixed parameters - wrap in Variant (unless already Variant), defer deinit immediately
+    // Fixed parameters - wrap in Variant (unless already Variant)
+    // Use wrap() for non-allocating types, init() for allocating types (packed arrays)
     for (function.parameters.values(), 0..) |param, i| {
         if (param.type == .variant) {
             try w.printLine("args[{d}] = @constCast(&{s});", .{ i, param.name });
         } else {
-            try w.print("args[{d}] = @constCast(&Variant.init(", .{i});
-            try writeTypeAtParameter(w, &param.type, class, ctx);
-            try w.printLine(", {s}));", .{param.name});
-            try w.printLine("defer args[{d}].deinit();", .{i});
+            // Check if this type requires allocation (packed arrays)
+            const needs_alloc = if (param.type == .basic) blk: {
+                const name = param.type.basic;
+                break :blk std.mem.startsWith(u8, name, "Packed");
+            } else false;
+
+            if (needs_alloc) {
+                try w.print("args[{d}] = @constCast(&Variant.init(", .{i});
+                try writeTypeAtParameter(w, &param.type, class, ctx);
+                try w.printLine(", {s}));", .{param.name});
+                try w.printLine("defer args[{d}].deinit();", .{i});
+            } else {
+                try w.print("args[{d}] = @constCast(&Variant.wrap(", .{i});
+                try writeTypeAtParameter(w, &param.type, class, ctx);
+                try w.printLine(", &{s}));", .{param.name});
+            }
         }
     }
 
     // Varargs - check if already a Variant before wrapping
+    // Use wrap() for non-allocating types, init() for allocating types (packed arrays)
     try w.printLine("inline for (0..@\"...\".len, {d}..args.len) |i, j| {{", .{param_count});
     w.indent += 1;
     try w.writeLine("if (@TypeOf(@\"...\"[i]) == Variant) {");
     w.indent += 1;
     try w.writeLine("args[j] = @constCast(&@\"...\"[i]);");
     w.indent -= 1;
-    try w.writeLine("} else {");
+    try w.writeLine("} else if (comptime Variant.Tag.allocatesForType(@TypeOf(@\"...\"[i]))) {");
     w.indent += 1;
     try w.writeLine("args[j] = @constCast(&Variant.init(@TypeOf(@\"...\"[i]), @\"...\"[i]));");
+    w.indent -= 1;
+    try w.writeLine("} else {");
+    w.indent += 1;
+    try w.writeLine("const val = @\"...\"[i];");
+    try w.writeLine("args[j] = @constCast(&Variant.wrap(@TypeOf(val), &val));");
     w.indent -= 1;
     try w.writeLine("}");
     w.indent -= 1;
     try w.writeLine("}");
 
-    // Defer deinit for varargs - only if we created the Variant
+    // Defer deinit for varargs - only for allocating types (packed arrays)
     try w.printLine("defer inline for (0..@\"...\".len, {d}..args.len) |i, j| {{", .{param_count});
     w.indent += 1;
-    try w.writeLine("if (@TypeOf(@\"...\"[i]) != Variant) {");
+    try w.writeLine("if (@TypeOf(@\"...\"[i]) != Variant and comptime Variant.Tag.allocatesForType(@TypeOf(@\"...\"[i]))) {");
     w.indent += 1;
     try w.writeLine("args[j].deinit();");
     w.indent -= 1;
@@ -1501,7 +1520,7 @@ fn writeModuleFunction(w: *CodeWriter, function: *const Context.Function, ctx: *
 /// Writes a thin vararg wrapper for a module function that does comptime check and delegates to the Alloc version.
 fn writeModuleFunctionVarargWrapper(w: *CodeWriter, function: *const Context.Function, ctx: *const Context) !void {
     try w.writeLine(
-        \\/// Guarantees no allocations when calling across the FFI. Passing Transform2d, Aabb, Basis, Transform3d, or Projection is a compile error; use the Alloc variant.
+        \\/// Guarantees no allocations when calling across the FFI. Passing packed arrays is a compile error; use the Alloc variant.
         \\///
     );
     try writeDocBlock(w, function.doc);
@@ -1531,7 +1550,7 @@ fn writeModuleFunctionVarargWrapper(w: *CodeWriter, function: *const Context.Fun
     try w.printLine(
         \\inline for (0..@"...".len) |_i| {{
         \\    if (@TypeOf(@"..."[_i]) != Variant and comptime Variant.Tag.allocatesForType(@TypeOf(@"..."[_i]))) {{
-        \\        @compileError(@typeName(@TypeOf(@"..."[_i])) ++ " allocates as Variant; use {s}Alloc() or pass a Variant instead.");
+        \\        @compileError(@typeName(@TypeOf(@"..."[_i])) ++ " requires allocation; use {s}Alloc() or pass a Variant instead.");
         \\    }}
         \\}}
     , .{function.name});

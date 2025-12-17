@@ -17,6 +17,7 @@ pub const Variant = extern struct {
     tag: Tag align(8),
     data: Data align(8),
 
+    /// Copies the value in, returning an owned Variant. This must be coupled with a call to `deinit`.
     pub fn init(comptime T: type, value: T) Variant {
         const tag = comptime Tag.forType(T);
 
@@ -54,6 +55,73 @@ pub const Variant = extern struct {
 
     pub fn deinit(self: Variant) void {
         raw.variantDestroy(@ptrCast(@constCast(&self)));
+    }
+
+    /// Wraps a value in a Variant without allocation or ownership transfer.
+    ///
+    /// Inline types (int, Vector3, etc.) are copied. Pointer types (Transform3d, Array,
+    /// etc.) store the pointer directly - the value must outlive this Variant.
+    ///
+    /// Calling `deinit` on the returned value is illegal behavior.
+    pub fn wrap(comptime T: type, value: *const T) Variant {
+        const tag = comptime Tag.forType(T);
+        return .{
+            .tag = tag,
+            .data = switch (tag) {
+                // Inline types
+                .nil => .{ .nil = {} },
+                .bool => .{ .bool = value.* },
+                .int => .{ .int = value.* },
+                .float => .{ .float = value.* },
+                .vector2 => .{ .vector2 = value.* },
+                .vector2i => .{ .vector2i = value.* },
+                .vector3 => .{ .vector3 = value.* },
+                .vector3i => .{ .vector3i = value.* },
+                .vector4 => .{ .vector4 = value.* },
+                .vector4i => .{ .vector4i = value.* },
+                .rect2 => .{ .rect2 = value.* },
+                .rect2i => .{ .rect2i = value.* },
+                .plane => .{ .plane = value.* },
+                .quaternion => .{ .quaternion = value.* },
+                .color => .{ .color = value.* },
+                .rid => .{ .rid = value.* },
+                .callable => .{ .callable = value.* },
+                .signal => .{ .signal = value.* },
+                .string => .{ .string = value.* },
+                .string_name => .{ .string_name = value.* },
+                .node_path => .{ .node_path = value.* },
+
+                // Pointer types
+                .transform2d => .{ .transform2d = @constCast(value) },
+                .transform3d => .{ .transform3d = @constCast(value) },
+                .aabb => .{ .aabb = @constCast(value) },
+                .basis => .{ .basis = @constCast(value) },
+                .projection => .{ .projection = @constCast(value) },
+                .array => .{ .array = @constCast(value) },
+                .dictionary => .{ .dictionary = @constCast(value) },
+
+                // Object
+                .object => .{
+                    .object = .{
+                        .id = @enumFromInt(Object.upcast(value.*).getInstanceId()),
+                        .object = Object.upcast(value.*),
+                    },
+                },
+
+                // Packed arrays cannot be wrapped - they require heap-allocated PackedArrayRef
+                .packed_byte_array,
+                .packed_int32_array,
+                .packed_int64_array,
+                .packed_float32_array,
+                .packed_float64_array,
+                .packed_string_array,
+                .packed_vector2_array,
+                .packed_vector3_array,
+                .packed_color_array,
+                .packed_vector4_array,
+                => @compileError("Packed arrays cannot be wrapped; use init() instead"),
+            },
+        };
     }
 
     fn isCompatibleCast(self: Variant, tag: Tag) bool {
@@ -550,20 +618,40 @@ pub const Variant = extern struct {
             return raw.variantCanConvertStrict(@intFromEnum(from), @intFromEnum(to)) != 0;
         }
 
-        /// Returns true if this variant type allocates from Godot's pool allocators.
-        /// These types need explicit cleanup when wrapped in a Variant.
+        /// Returns true if this variant type requires heap allocation when wrapped in a Variant.
+        /// Packed arrays use a refcounted wrapper (PackedArrayRef) that cannot be stack-allocated
+        /// safely, as Godot may copy the Variant and hold a reference to the wrapper.
         pub fn allocates(self: Tag) bool {
             return switch (self) {
-                .transform2d, .aabb, .basis, .transform3d, .projection => true,
+                .packed_byte_array,
+                .packed_int32_array,
+                .packed_int64_array,
+                .packed_float32_array,
+                .packed_float64_array,
+                .packed_string_array,
+                .packed_vector2_array,
+                .packed_vector3_array,
+                .packed_color_array,
+                .packed_vector4_array,
+                => true,
                 else => false,
             };
         }
 
-        /// Returns true if wrapping the given type in a Variant would allocate from Godot's pool allocators.
+        /// Returns true if wrapping the given type in a Variant would require heap allocation.
         pub fn allocatesForType(comptime T: type) bool {
             return forType(T).allocates();
         }
     };
+
+    /// Godot's PackedArrayRef - a heap-allocated wrapper with refcount + array.
+    /// The Variant stores a pointer to this structure.
+    pub fn PackedArrayRef(comptime T: type) type {
+        return extern struct {
+            refcount: u32,
+            array: T,
+        };
+    }
 
     pub const Data = extern union {
         aabb: *Aabb,
@@ -578,15 +666,16 @@ pub const Variant = extern struct {
         nil: void,
         node_path: NodePath,
         object: extern struct { id: ObjectId, object: *Object },
-        packed_byte_array: extern struct { refs: Atomic(u32), array: *PackedByteArray },
-        packed_color_array: extern struct { refs: Atomic(u32), array: *PackedColorArray },
-        packed_float32_array: extern struct { refs: Atomic(u32), array: *PackedFloat32Array },
-        packed_float64_array: extern struct { refs: Atomic(u32), array: *PackedFloat64Array },
-        packed_int32_array: extern struct { refs: Atomic(u32), array: *PackedInt32Array },
-        packed_int64_array: extern struct { refs: Atomic(u32), array: *PackedInt64Array },
-        packed_string_array: extern struct { refs: Atomic(u32), array: *PackedStringArray },
-        packed_vector2_array: extern struct { refs: Atomic(u32), array: *PackedVector2Array },
-        packed_vector3_array: extern struct { refs: Atomic(u32), array: *PackedVector3Array },
+        packed_byte_array: *PackedArrayRef(PackedByteArray),
+        packed_color_array: *PackedArrayRef(PackedColorArray),
+        packed_float32_array: *PackedArrayRef(PackedFloat32Array),
+        packed_float64_array: *PackedArrayRef(PackedFloat64Array),
+        packed_int32_array: *PackedArrayRef(PackedInt32Array),
+        packed_int64_array: *PackedArrayRef(PackedInt64Array),
+        packed_string_array: *PackedArrayRef(PackedStringArray),
+        packed_vector2_array: *PackedArrayRef(PackedVector2Array),
+        packed_vector3_array: *PackedArrayRef(PackedVector3Array),
+        packed_vector4_array: *PackedArrayRef(PackedVector4Array),
         plane: Plane,
         projection: *Projection,
         quaternion: Quaternion,
@@ -760,6 +849,7 @@ const PackedInt64Array = gdzig.builtin.PackedInt64Array;
 const PackedStringArray = gdzig.builtin.PackedStringArray;
 const PackedVector2Array = gdzig.builtin.PackedVector2Array;
 const PackedVector3Array = gdzig.builtin.PackedVector3Array;
+const PackedVector4Array = gdzig.builtin.PackedVector4Array;
 const Plane = gdzig.builtin.Plane;
 const Projection = gdzig.builtin.Projection;
 const Quaternion = gdzig.builtin.Quaternion;

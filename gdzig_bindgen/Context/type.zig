@@ -351,8 +351,9 @@ pub const Type = union(enum) {
         };
     }
 
-    /// Returns true if wrapping this type in a Variant would allocate from Godot's pool allocators.
-    /// These types need explicit cleanup when wrapped: Transform2D, AABB, Basis, Transform3D, Projection.
+    /// Returns true if wrapping this type in a Variant requires heap allocation.
+    /// Packed arrays use a refcounted wrapper (PackedArrayRef) that cannot be stack-allocated
+    /// safely, as Godot may copy the Variant and hold a reference to the wrapper.
     /// Note: This must stay in sync with Variant.Tag.allocates() in the runtime.
     pub fn allocatesAsVariant(self: Type, ctx: *const Context) bool {
         _ = ctx;
@@ -360,14 +361,7 @@ pub const Type = union(enum) {
             .basic => |n| n,
             else => return false,
         };
-        return std.mem.eql(u8, name, "Transform2D") or
-            std.mem.eql(u8, name, "Transform2d") or
-            std.mem.eql(u8, name, "AABB") or
-            std.mem.eql(u8, name, "Aabb") or
-            std.mem.eql(u8, name, "Basis") or
-            std.mem.eql(u8, name, "Transform3D") or
-            std.mem.eql(u8, name, "Transform3d") or
-            std.mem.eql(u8, name, "Projection");
+        return std.mem.startsWith(u8, name, "Packed");
     }
 };
 

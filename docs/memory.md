@@ -13,6 +13,7 @@ The recommended setup is `std.heap.DebugAllocator` with `engine_allocator` as th
 Godot has two main kinds of types:
 
 - **Builtins**: Value types with known layout - either stack-allocated structs or reference-counted types on the heap.
+- **Variant**: A special kind of builtin that can represent any builtin or class.
 - **Classes**: Heap-allocated objects accessed by pointer. Engine classes are opaque; your extension classes are not.
 
 Each category has different memory management rules, covered in the sections below.
@@ -23,16 +24,16 @@ Builtins fall into two categories:
 
 **Value types** like `Vector2`, `Vector3`, `Color`, `Rect2`, etc. are plain structs. They live on the stack, copy by value, and need no cleanup.
 
-**Reference-counted value types** like `String`, `Array`, `Dictionary`, `Callable`, and `Signal` use copy-on-write semantics. When you assign or pass them, they share the underlying buffer until one copy is modified. From your perspective, they behave like copies - you can use them independently. Call `deinit()` when done to release your reference:
+**Copy-on-write types** like `String`, `Array`, or `Dictionary`. When you assign or pass them, they share the underlying buffer until one copy is modified. From your perspective, they behave like copies - you can use them independently. Call `deinit()` when done to release your reference:
 
 ```zig
 var arr = Array.init();
 defer arr.deinit();
 ```
 
-### Variant
+## Variant
 
-`Variant` is a builtin that acts as Godot's dynamic type container, used extensively in the scripting API. It can hold:
+`Variant` is a special builtin that acts as Godot's dynamic type container, used extensively in the scripting API. It can hold:
 
 - Primitives: `nil`, `bool`, `int`, `float`
 - Math types: `Vector2`, `Vector2i`, `Vector3`, `Vector3i`, `Vector4`, `Vector4i`, `Rect2`, `Rect2i`, `Plane`, `Quaternion`, `Color`
@@ -42,13 +43,15 @@ defer arr.deinit();
 - Packed arrays: `PackedByteArray`, `PackedInt32Array`, `PackedInt64Array`, `PackedFloat32Array`, `PackedFloat64Array`, `PackedStringArray`, `PackedVector2Array`, `PackedVector3Array`, `PackedVector4Array`, `PackedColorArray`
 - References: `Rid`, `Object`, `Callable`, `Signal`
 
-Most types wrap into `Variant` cheaply. However, five types allocate from Godot's pool allocators when wrapped:
+`Variant` is a stack data structure, but it can hold pointers into the heap.
 
-- `Transform2d`
-- `Aabb`
-- `Basis`
-- `Transform3d`
-- `Projection`
+Most types can be boxed into a `Variant` cheaply, with some exceptions:
+
+- `Aabb`, `Basis`, `Projection`, `Transform2d`, and `Transform3d` will allocate from a memory pool by Godot when created with `Variant.init`, but not when created with `Variant.wrap`.
+- Packed array types will allocate directly from the heap when created with `Variant.init`, and cannot be created with `Variant.wrap`.
+- All other types are copied on creation for both `Variant.init` and `Variant.wrap`.
+
+`Variant.wrap` is an advanced utility for passing stack pointers into Godot without having to allocate memory on the heap.
 
 #### Always deinit `Variant`s
 
@@ -62,7 +65,7 @@ defer result.deinit();
 
 ## Classes
 
-Beyond value types and Variants, Godot has **classes** - heap-allocated objects accessed by pointer. All classes inherit from `Object`, with some inheriting from `RefCounted` (itself an `Object` subclass).
+Beyond value types and `Variant`s, Godot has **classes** - heap-allocated objects accessed by pointer. All classes inherit from `Object`, with some inheriting from `RefCounted` (itself an `Object` subclass).
 
 **RefCounted** classes (and their descendants like `Resource`) use reference counting. You must manage this manually:
 
@@ -103,27 +106,27 @@ const Player = struct {
 };
 ```
 
-Note that `Object.init()` is non-fallible (it will panic on failure), so no `errdefer` cleanup of `self` is necessary.
+Note that `Object.init()` is will panic on failure, so no `errdefer` cleanup of `self` is necessary.
 
 ## Method Calls
 
 gdzig generates two styles of methods for Godot's types:
 
-- **Fixed-arity methods** have a known number of arguments. These pass arguments directly by pointer with no Variant boxing - the fast path with no allocations.
+- **Fixed-arity methods** have a known number of arguments. These pass arguments directly by pointer with no `Variant` boxing - the fast path with no allocations.
 
-- **Vararg methods** like `Object.call()` accept any number of arguments by boxing them into Variants. The return value is always a `Variant` that you must `deinit()`.
+- **Vararg methods** like `Object.call()` accept any number of arguments by boxing them into `Variant`s. The return value is always a `Variant` that you must `deinit()`.
 
-For vararg functions, gdzig provides two versions:
+For vararg functions, gdzig provides two versions to help you:
 
-- **Non-allocating** (`call`, `emit`, etc.): Compile error if you pass `Transform2d`, `Aabb`, `Basis`, `Transform3d`, or `Projection`. These would allocate when boxed into Variant, so they are not allowed.
-- **Allocating** (`callAlloc`, `emitAlloc`, etc.): Accepts those types, boxing them in a Variant internally.
+- **Non-allocating** (`call`, `emit`, etc.): Compile error if you pass packed array types (`PackedByteArray`, `PackedInt32Array`, etc.). These require heap allocation when boxed into `Variant`.
+- **Allocating** (`callAlloc`, `emitAlloc`, etc.): Accepts packed arrays, boxing them in a `Variant` internally and cleaning up after the call.
 
-The non-allocating versions protect you from accidental leaks. If you need to pass one of those types, use the allocating version or wrap the value in a `Variant` and manage its lifetime yourself.
+The non-allocating versions protect you from accidental allocations. If you need to pass a packed array, use the allocating version or box it in a `Variant` yourself and manage its lifetime.
 
 ## Common Gotchas
 
 **Leaking Variants**: Any `Variant` returned from a vararg call must be `deinit()`ed. The compiler can't catch this.
 
-**Pool-allocating types in varargs**: Using `Transform3d` etc. in `call()` or `emit()` is a compile error by design. Use the Alloc variants.
+**Packed arrays in varargs**: Using `PackedByteArray` etc. in `call()` or `emit()` is a compile error by design. Use the Alloc variants.
 
 **Storing RefCounted references**: Storing raw pointers to RefCounted objects won't prevent collection - you must call `reference()` to prevent the object from being freed.
