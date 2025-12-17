@@ -47,7 +47,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const DebugAllocator = std.heap.DebugAllocator;
-const InitializationLevel = godot.global.InitializationLevel;
+const InitializationLevel = godot.extension.InitializationLevel;
 
 const godot = @import("gdzig");
 

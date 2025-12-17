@@ -17,16 +17,15 @@ pub const c = @import("gdextension");
 pub const builtin = @import("builtin.zig");
 pub const class = @import("class.zig");
 pub const engine_allocator = @import("heap.zig").engine_allocator;
+pub const extension = @import("extension.zig");
+pub const registerExtension = extension.registerExtension;
+pub const registerClass = extension.registerClass;
+pub const registerMethod = extension.registerMethod;
+pub const registerSignal = extension.registerSignal;
 pub const general = @import("general.zig");
 pub const global = @import("global.zig");
 pub const math = @import("math.zig");
-
 pub const random = @import("random.zig");
-const register = @import("register.zig");
-pub const registerClass = register.registerClass;
-pub const registerExtension = register.registerExtension;
-pub const registerMethod = register.registerMethod;
-pub const registerSignal = register.registerSignal;
 
 const DispatchTable = @import("DispatchTable.zig");
 

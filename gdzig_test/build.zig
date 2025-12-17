@@ -153,7 +153,7 @@ fn generateMain(b: *Build) Build.LazyPath {
         \\
         \\const std = @import("std");
         \\const godot = @import("gdzig");
-        \\const InitializationLevel = godot.global.InitializationLevel;
+        \\const InitializationLevel = godot.extension.InitializationLevel;
         \\const testcase = @import("testcase");
         \\const testing = @import("gdzig_test");
     );

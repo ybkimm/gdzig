@@ -95,6 +95,6 @@ pub const refAllDeclsRecursive = std.testing.refAllDeclsRecursive;
 pub const tmpDir = std.testing.tmpDir;
 
 const godot = @import("gdzig");
-const InitializationLevel = godot.global.InitializationLevel;
+const InitializationLevel = godot.extension.InitializationLevel;
 const Object = godot.class.Object;
 const StringName = godot.builtin.StringName;

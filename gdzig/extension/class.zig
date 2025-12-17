@@ -1,94 +1,20 @@
-pub const ExtensionOptions = struct {
-    entry_symbol: []const u8,
-    minimum_initialization_level: InitializationLevel = .core,
-};
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const MemoryPool = std.heap.MemoryPool;
+const assert = std.debug.assert;
 
-pub fn registerExtension(comptime T: type, comptime opt: ExtensionOptions) void {
-    const Cache = struct {
-        var state: T = undefined;
-    };
+const c = @import("gdextension");
+const common = @import("common");
+const GeneralPurposeAllocator = common.GeneralPurposeAllocator;
+const gdzig = @import("gdzig");
+const class = gdzig.class;
+const classdb = gdzig.class.ClassDb;
+const ClassInfo4 = gdzig.class.ClassDb.ClassInfo4;
+const String = gdzig.builtin.String;
+const StringName = gdzig.builtin.StringName;
+const Object = gdzig.class.Object;
 
-    @export(&struct {
-        fn entrypoint(
-            p_get_proc_address: c.GDExtensionInterfaceGetProcAddress,
-            p_library: c.GDExtensionClassLibraryPtr,
-            r_initialization: [*c]c.GDExtensionInitialization,
-        ) callconv(.c) c.GDExtensionBool {
-            raw.* = .init(p_get_proc_address.?, p_library.?);
-            raw.getGodotVersion(@ptrCast(&gdzig.version));
-
-            Cache.state = init() catch |err| {
-                std.log.err("Failed to initialize extension: {}", .{err});
-                return @intFromBool(false);
-            };
-
-            r_initialization.*.userdata = @ptrCast(&Cache.state);
-            r_initialization.*.initialize = @ptrCast(&enter);
-            r_initialization.*.deinitialize = @ptrCast(&exit);
-            r_initialization.*.minimum_initialization_level = @intFromEnum(opt.minimum_initialization_level);
-
-            return @intFromBool(true);
-        }
-
-        fn init() anyerror!T {
-            if (@hasDecl(T, "init")) {
-                const return_type = @typeInfo(@TypeOf(T.init)).@"fn".return_type.?;
-                return if (@typeInfo(return_type) == .error_union)
-                    T.init()
-                else
-                    T.init();
-            } else {
-                comptime assertDefaultInitializable();
-                return .{};
-            }
-        }
-
-        fn enter(userdata: ?*anyopaque, p_level: c.GDExtensionInitializationLevel) callconv(.c) void {
-            const self: *T = @ptrCast(@alignCast(userdata.?));
-            const level: InitializationLevel = @enumFromInt(p_level);
-
-            if (@hasDecl(T, "enter")) {
-                self.enter(level);
-            }
-        }
-
-        fn exit(userdata: ?*anyopaque, p_level: c.GDExtensionInitializationLevel) callconv(.c) void {
-            const self: *T = @ptrCast(@alignCast(userdata.?));
-            const level: InitializationLevel = @enumFromInt(p_level);
-
-            if (@hasDecl(T, "exit")) {
-                self.exit(level);
-            }
-
-            if (level == opt.minimum_initialization_level) {
-                PropertyListMeta.cleanup();
-                DestroyMeta.cleanup();
-                if (@hasDecl(T, "destroy")) self.destroy();
-            }
-        }
-
-        fn assertDefaultInitializable() void {
-            const info = @typeInfo(T);
-
-            if (info != .@"struct") @compileError(@typeName(T) ++ " is not a struct, and cannot be default-initialized. It must have an initializer function.");
-
-            comptime var missing: []const u8 = "";
-            for (info.@"struct".fields) |field| {
-                if (field.default_value_ptr == null) {
-                    missing = missing ++ if (missing.len > 0) ", " else "";
-                    missing = missing ++ "'" ++ field.name ++ "'";
-                }
-            }
-
-            if (missing.len > 0) {
-                @compileError("Cannot default-initialize '" ++ @typeName(T) ++ "' because field(s) " ++ missing ++ " are missing default values. Either provide default values for all fields, or implement 'pub fn init() " ++ @typeName(T) ++ " {}'.");
-            }
-        }
-    }.entrypoint, .{
-        .name = opt.entry_symbol,
-        .linkage = .strong,
-    });
-}
+const meta = @import("../meta.zig");
 
 pub fn registerClass(comptime T: type, info: ClassInfo4(ClassUserdataOf(T))) void {
     const class_name: StringName = .fromComptimeLatin1(meta.typeShortName(T));
@@ -130,7 +56,7 @@ pub fn registerClass(comptime T: type, info: ClassInfo4(ClassUserdataOf(T))) voi
 }
 
 /// Extracts the `ClassUserdata` type from a type `T` by inspecting its `create` function.
-fn ClassUserdataOf(comptime T: type) type {
+pub fn ClassUserdataOf(comptime T: type) type {
     if (!@hasDecl(T, "create")) {
         @compileError("Type '" ++ @typeName(T) ++ "' must have a 'create' function");
     }
@@ -145,14 +71,14 @@ fn ClassUserdataOf(comptime T: type) type {
 /// This instance binding is only used in Godot 4.1 through 4.3; versions 4.4+
 /// properly store and pass around the list lengths. Allocations are backed by a
 /// memory pool and cleaned up at extension deinitialization.
-const PropertyListMeta = struct {
+pub const PropertyListInstanceBinding = struct {
     len: usize = 0,
 
     var gpa: GeneralPurposeAllocator = .init(gdzig.engine_allocator);
     const allocator = gpa.allocator();
-    var pool: MemoryPool(PropertyListMeta) = .init(allocator);
+    var pool: MemoryPool(PropertyListInstanceBinding) = .init(allocator);
 
-    const callbacks: c.GDExtensionInstanceBindingCallbacks = .{
+    pub const callbacks: c.GDExtensionInstanceBindingCallbacks = .{
         .create_callback = &create,
         .free_callback = &free,
     };
@@ -172,13 +98,13 @@ const PropertyListMeta = struct {
 };
 
 /// Tracks destruction state to prevent double-free.
-pub const DestroyMeta = struct {
+pub const DestroyInstanceBinding = struct {
     user_destroying: bool = false,
     engine_destroying: bool = false,
 
     var gpa: GeneralPurposeAllocator = .init(gdzig.engine_allocator);
     const allocator = gpa.allocator();
-    var pool: MemoryPool(PropertyListMeta) = .init(allocator);
+    var pool: MemoryPool(PropertyListInstanceBinding) = .init(allocator);
 
     pub const callbacks: c.GDExtensionInstanceBindingCallbacks = .{
         .create_callback = &create,
@@ -193,8 +119,8 @@ pub const DestroyMeta = struct {
         if (binding) |self| pool.destroy(@ptrCast(@alignCast(self)));
     }
 
-    pub fn get(obj: *Object) ?*DestroyMeta {
-        const raw_ptr = raw.objectGetInstanceBinding(obj, @ptrCast(@constCast(&callbacks)), &callbacks);
+    pub fn get(obj: *Object) ?*DestroyInstanceBinding {
+        const raw_ptr = gdzig.raw.objectGetInstanceBinding(obj, @ptrCast(@constCast(&callbacks)), &callbacks);
         return @ptrCast(@alignCast(raw_ptr));
     }
 
@@ -261,7 +187,7 @@ fn makeClassCallbacks(comptime T: type) struct {
         /// @since 4.1
         fn destroy(self: *T, userdata: ClassUserdataOf(T)) void {
             const obj = Object.upcast(self);
-            if (DestroyMeta.get(obj)) |destroy_meta| {
+            if (DestroyInstanceBinding.get(obj)) |destroy_meta| {
                 if (destroy_meta.user_destroying) return;
                 destroy_meta.engine_destroying = true;
             }
@@ -311,8 +237,8 @@ fn makeClassCallbacks(comptime T: type) struct {
             errdefer destroyPropertyList1(self, list.ptr);
 
             const obj = Object.upcast(self);
-            const raw_ptr = raw.objectGetInstanceBinding(obj, @ptrCast(@constCast(&PropertyListMeta.callbacks)), &PropertyListMeta.callbacks);
-            const ptr: *PropertyListMeta = @ptrCast(@alignCast(raw_ptr orelse return error.OutOfMemory));
+            const raw_ptr = gdzig.raw.objectGetInstanceBinding(obj, @ptrCast(@constCast(&PropertyListInstanceBinding.callbacks)), &PropertyListInstanceBinding.callbacks);
+            const ptr: *PropertyListInstanceBinding = @ptrCast(@alignCast(raw_ptr orelse return error.OutOfMemory));
             ptr.len = list.len;
 
             return list;
@@ -324,8 +250,8 @@ fn makeClassCallbacks(comptime T: type) struct {
         /// @until 4.3
         fn destroyPropertyList1(self: *T, list: [*]const classdb.PropertyInfo) void {
             const obj = Object.upcast(self);
-            const raw_ptr = raw.objectGetInstanceBinding(obj, @ptrCast(@constCast(&PropertyListMeta.callbacks)), &PropertyListMeta.callbacks);
-            const ptr: *PropertyListMeta = @ptrCast(@alignCast(raw_ptr orelse @panic("Failed to get property list metadata")));
+            const raw_ptr = gdzig.raw.objectGetInstanceBinding(obj, @ptrCast(@constCast(&PropertyListInstanceBinding.callbacks)), &PropertyListInstanceBinding.callbacks);
+            const ptr: *PropertyListInstanceBinding = @ptrCast(@alignCast(raw_ptr orelse @panic("Failed to get property list metadata")));
             T._destroyPropertyList(self, list[0..ptr.len]);
         }
     };
@@ -461,142 +387,3 @@ fn virtualMethodNames(comptime T: type) []const []const u8 {
 
     return names[0..count];
 }
-
-pub fn registerMethod(comptime T: type, comptime name: DeclEnum(T)) void {
-    const name_str = @tagName(name);
-    var class_name: StringName = .fromComptimeLatin1(meta.typeShortName(T));
-    var method_name: StringName = .fromComptimeLatin1(casez.comptimeConvert(godot_case.method, name_str));
-
-    const MethodType = @TypeOf(@field(T, name_str));
-    const fn_info = @typeInfo(MethodType).@"fn";
-    const Args = fn_info.params;
-    const ReturnType = fn_info.return_type orelse void;
-    const arg_count = Args.len - 1;
-
-    const return_value: classdb.PropertyInfo = .{
-        .type = .forType(ReturnType),
-    };
-
-    const arg_infos: [arg_count]classdb.PropertyInfo = comptime blk: {
-        var infos: [arg_count]classdb.PropertyInfo = undefined;
-        for (0..arg_count) |i| {
-            const ArgType = Args[i + 1].type.?;
-            infos[i] = .{ .type = .forType(ArgType) };
-        }
-        break :blk infos;
-    };
-
-    const arg_metas: [arg_count]classdb.MethodArgumentMetadata = comptime blk: {
-        var metas: [arg_count]classdb.MethodArgumentMetadata = undefined;
-        for (0..arg_count) |i| {
-            metas[i] = .none;
-        }
-        break :blk metas;
-    };
-
-    const Callbacks = struct {
-        const method = @field(T, name_str);
-
-        fn call(instance: *T, args: []const *const Variant) gdzig.CallError!Variant {
-            var call_args: std.meta.ArgsTuple(MethodType) = undefined;
-            call_args[0] = instance;
-            inline for (1..Args.len) |i| {
-                const ArgType = Args[i].type.?;
-                if (i - 1 < args.len) {
-                    call_args[i] = args[i - 1].as(ArgType) orelse return error.InvalidArgument;
-                }
-            }
-            if (ReturnType == void) {
-                @call(.auto, method, call_args);
-                return Variant.nil;
-            } else {
-                const result = @call(.auto, method, call_args);
-                return Variant.init(ReturnType, result);
-            }
-        }
-
-        fn ptrCall(instance: *T, args: [*]const *const anyopaque, ret: ?*anyopaque) void {
-            var call_args: std.meta.ArgsTuple(MethodType) = undefined;
-            call_args[0] = instance;
-            inline for (1..Args.len) |i| {
-                const ArgType = Args[i].type.?;
-                call_args[i] = ptrToArg(ArgType, args[i - 1]);
-            }
-            if (ReturnType == void) {
-                @call(.auto, method, call_args);
-            } else {
-                const result = @call(.auto, method, call_args);
-                if (ret) |r| {
-                    @as(*ReturnType, @ptrCast(@alignCast(r))).* = result;
-                }
-            }
-        }
-
-        fn ptrToArg(comptime ArgType: type, p_arg: *const anyopaque) ArgType {
-            if (comptime class.isRefCountedPtr(ArgType) and class.isOpaqueClassPtr(ArgType)) {
-                const obj = raw.refGetObject(@ptrCast(p_arg));
-                return @ptrCast(obj.?);
-            } else if (comptime class.isOpaqueClassPtr(ArgType)) {
-                return @ptrCast(@constCast(p_arg));
-            } else {
-                return @as(*const ArgType, @ptrCast(@alignCast(p_arg))).*;
-            }
-        }
-    };
-
-    classdb.registerMethod(T, void, &class_name, .{
-        .name = &method_name,
-        .return_value_info = if (ReturnType != void) @constCast(&return_value) else null,
-        .argument_info = @constCast(&arg_infos),
-        .argument_metadata = @constCast(&arg_metas),
-    }, .{
-        .call = Callbacks.call,
-        .ptr_call = Callbacks.ptrCall,
-    });
-}
-
-pub fn registerSignal(comptime T: type, comptime S: type) void {
-    const class_name: StringName = .fromComptimeLatin1(meta.typeShortName(T));
-    const signal_name: StringName = .fromComptimeLatin1(casez.comptimeConvert(godot_case.signal, meta.typeShortName(S)));
-
-    const fields = @typeInfo(S).@"struct".fields;
-    var arg_info: [fields.len]classdb.PropertyInfo = undefined;
-    var names: [fields.len]StringName = undefined;
-    inline for (fields, 0..) |field, i| {
-        names[i] = .fromComptimeLatin1(field.name);
-        arg_info[i] = .{
-            .type = .forType(field.type),
-            .name = &names[i],
-        };
-    }
-
-    classdb.registerSignal(&class_name, &signal_name, &arg_info);
-}
-
-const raw = &gdzig.raw;
-
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const DebugAllocator = std.heap.DebugAllocator;
-const DeclEnum = std.meta.DeclEnum;
-const MemoryPool = std.heap.MemoryPool;
-const assert = std.debug.assert;
-const builtin = @import("builtin");
-
-const c = @import("gdextension");
-const casez = @import("casez");
-const common = @import("common");
-const godot_case = common.godot_case;
-const GeneralPurposeAllocator = common.GeneralPurposeAllocator;
-const gdzig = @import("gdzig");
-const string = gdzig.string;
-const class = gdzig.class;
-const classdb = gdzig.class.ClassDb;
-const ClassInfo4 = gdzig.class.ClassDb.ClassInfo4;
-const InitializationLevel = gdzig.global.InitializationLevel;
-const String = gdzig.builtin.String;
-const StringName = gdzig.builtin.StringName;
-const Variant = gdzig.builtin.Variant;
-const Object = gdzig.class.Object;
-
-const meta = @import("meta.zig");
