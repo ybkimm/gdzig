@@ -141,9 +141,12 @@ pub fn register() void {
         .argument_metadata = &two_arg_meta,
     }, .{ .call = callSetIndexedValue });
 
-    var indexed_property_name = StringName.fromComptimeLatin1("indexed_value");
-    var indexed_property_info = ClassDB.PropertyInfo{ .type = .int, .name = &indexed_property_name };
-    ClassDB.registerPropertyIndexed(&class_name, &indexed_property_info, &set_indexed_name, &get_indexed_name, 0);
+    // Indexed properties require Godot 4.2+
+    if (godot.version.gte(.@"4.2")) {
+        var indexed_property_name = StringName.fromComptimeLatin1("indexed_value");
+        var indexed_property_info = ClassDB.PropertyInfo{ .type = .int, .name = &indexed_property_name };
+        ClassDB.registerPropertyIndexed(&class_name, &indexed_property_info, &set_indexed_name, &get_indexed_name, 0);
+    }
 
     // Property groups
     var group_name = String.fromLatin1("Test Group");

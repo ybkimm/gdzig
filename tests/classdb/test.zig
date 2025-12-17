@@ -17,9 +17,12 @@ pub fn run() !void {
     _ = Object.call(.upcast(node), .fromComptimeLatin1("set_my_property"), .{@as(i64, 100)});
     try testing.expectCall(node, "get_my_property", .{}, @as(i64, 100));
 
-    try testing.expectCall(node, "get_indexed_value", .{@as(i64, 1)}, @as(i64, 200));
-    _ = Object.call(.upcast(node), .fromComptimeLatin1("set_indexed_value"), .{ @as(i64, 1), @as(i64, 999) });
-    try testing.expectCall(node, "get_indexed_value", .{@as(i64, 1)}, @as(i64, 999));
+    // Indexed properties require Godot 4.2+
+    if (godot.version.gte(.@"4.2")) {
+        try testing.expectCall(node, "get_indexed_value", .{@as(i64, 1)}, @as(i64, 200));
+        _ = Object.call(.upcast(node), .fromComptimeLatin1("set_indexed_value"), .{ @as(i64, 1), @as(i64, 999) });
+        try testing.expectCall(node, "get_indexed_value", .{@as(i64, 1)}, @as(i64, 999));
+    }
 }
 
 const godot = @import("gdzig");

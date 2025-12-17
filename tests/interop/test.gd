@@ -69,7 +69,7 @@ func test_zig_signal_emission() -> void:
 	var signal_received := false
 	var signal_value := 0
 
-	zig_obj.zig.connect(func(value: int) -> void:
+	zig_obj.zig_signal.connect(func(value: int) -> void:
 		signal_received = true
 		signal_value = value
 	)

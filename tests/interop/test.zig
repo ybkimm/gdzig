@@ -12,7 +12,11 @@
 /// 4. GDScript extending Zig classes with virtual method overrides (_ready)
 /// 5. GDScript objects with methods (GodotObject.godot_method)
 /// 6. Signals emitted from GDScript received by Zig (godot_signal -> on_godot_signal)
+///
+/// Note: This test requires Godot 4.2+ due to GDScript interop requirements.
 pub fn init() void {
+    // Skip on Godot 4.1 - GDScript calling extension class methods requires 4.2+
+    if (!godot.version.gte(.@"4.2")) return;
     godot.registerClass(ZigObject, .{ .userdata = &testing.allocator });
     godot.registerMethod(ZigObject, .zigMethod);
     godot.registerMethod(ZigObject, .receiveZigObject);
