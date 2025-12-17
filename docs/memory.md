@@ -8,6 +8,11 @@ Godot provides its own allocator through the GDExtension API. gdzig wraps this a
 
 The recommended setup is `std.heap.DebugAllocator` with `engine_allocator` as the backing allocator. This catches leaks and use-after-free in your Zig code, while still routing through Godot so its profiler can track total memory usage.
 
+### Limitations
+
+- Godot's allocator API does not support resizing existing allocations, so neither does `gdzig.engine_allocator`. 
+- Godot's allocator API does not support alignment, so `gdzig.engine_allocator` has to add padding to aligned allocations. We store a 4 byte header in the padding to retrieve the original pointer offset.
+
 ## Godot Types
 
 Godot has two main kinds of types:
@@ -31,6 +36,16 @@ var arr = Array.init();
 defer arr.deinit();
 ```
 
+### String
+
+Godot `String`s are stored in UTF-32, are reference counted, and are copy-on-write: if one reference is held, it can be modified in place. If more than one is held, modifications create a new copy.
+
+### StringName
+
+`StringName` is a deduplicated (interned), reference counted, UTF-32 string. Initializing a `StringName` the first time will allocate, and any additional initializations of the same string will just increment the reference count.
+
+Godot has a feature to create a `StringName` from data with a static lifetime (will exist for the entire lifetime of the application). gdzig offers a convenience function `StringName.fromComptimeLatin1` that takes a comptime string parameter. This guarantees the string literal lives in static memory, and also caches the resulting `StringName` in a static variable. The first call allocates Godot's internal `_Data` struct; subsequent calls return the cached value without even calling into Godot.
+
 ## Variant
 
 `Variant` is a special builtin that acts as Godot's dynamic type container, used extensively in the scripting API. It can hold:
@@ -47,11 +62,11 @@ defer arr.deinit();
 
 Most types can be boxed into a `Variant` cheaply, with some exceptions:
 
-- `Aabb`, `Basis`, `Projection`, `Transform2d`, and `Transform3d` will allocate from a memory pool by Godot when created with `Variant.init`, but not when created with `Variant.wrap`.
+- `Aabb`, `Basis`, `Projection`, `Transform2d`, and `Transform3d` are too large to fit inline in the Variant's data union, so they're stored as pointers. When created with `Variant.init`, Godot allocates space for them from a memory pool. When created with `Variant.wrap`, the pointer references your stack data directly.
 - Packed array types will allocate directly from the heap when created with `Variant.init`, and cannot be created with `Variant.wrap`.
 - All other types are copied on creation for both `Variant.init` and `Variant.wrap`.
 
-`Variant.wrap` is an advanced utility for passing stack pointers into Godot without having to allocate memory on the heap.
+`Variant.wrap` is an advanced utility for passing stack pointers into Godot without having to allocate memory on the heap. Calling `deinit()` on a `Variant` created with `wrap` is illegal behavior.
 
 #### Always deinit `Variant`s
 
@@ -75,6 +90,14 @@ _ = obj.reference();
 
 // When releasing
 if (obj.unreference()) obj.destroy();
+```
+
+In gdzig, when you box a `RefCounted` object pointer into a `Variant`, ownership is not taken. Instead, the reference count is incremented. This is different than Godot's internal behavior; but we determined it was a significant source of confusion worth correcting. If you'd like to pass ownership of a `RefCounted` type to a `Variant` in gdzig, just call `obj.unreference()` after initializing the Variant:
+
+```zig
+const obj = RefCounted.init();
+defer _ = obj.unreference();
+return Variant.init(obj);
 ```
 
 **Non-RefCounted** classes (like `Node`) require manual destruction. Prefer `node.queueFree()` which defers destruction until safe. Use `node.destroy()` only when immediate destruction is required (e.g., in your extension class's destroy callback).
