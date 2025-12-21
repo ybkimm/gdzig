@@ -25,11 +25,15 @@ pub fn run(allocator: std.mem.Allocator) void {
 fn runImpl(allocator: std.mem.Allocator) !void {
     log.debug("server starting...", .{});
 
-    // Get port from environment variable
-    const port_str = std.posix.getenv("GDZIG_TEST_PORT") orelse {
-        log.debug("GDZIG_TEST_PORT not set, skipping test server", .{});
+    const port_str = std.process.getEnvVarOwned(allocator, "GDZIG_TEST_PORT") catch |err| {
+        if (err == error.EnvironmentVariableNotFound) {
+            log.debug("GDZIG_TEST_PORT not set, skipping test server", .{});
+            return;
+        }
+        log.debug("failed to get GDZIG_TEST_PORT: {}", .{err});
         return;
     };
+    defer allocator.free(port_str);
 
     log.debug("GDZIG_TEST_PORT={s}", .{port_str});
 
