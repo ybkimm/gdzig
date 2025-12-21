@@ -3,20 +3,17 @@
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
     zig.url = "github:mitchellh/zig-overlay";
     zig.inputs.nixpkgs.follows = "nixpkgs";
-    zls.url = "github:zigtools/zls";
+    zls.url = "github:zigtools/zls?ref=0.15.1";
     zls.inputs.nixpkgs.follows = "nixpkgs";
     zls.inputs.zig-overlay.follows = "zig";
-    nixgl.url = "github:nix-community/nixGL";
-    nixgl.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
     {
-      self,
-      nixgl,
       nixpkgs,
       zig,
       zls,
+      ...
     }:
     let
       supportedSystems = [
@@ -30,7 +27,7 @@
         system:
         import nixpkgs {
           inherit system;
-          overlays = [ nixgl.overlay ];
+          overlays = [ ];
         }
       );
     in
@@ -39,31 +36,18 @@
         system:
         let
           pkgs = nixpkgsFor.${system};
-          zigPinned = zig.packages.${system}."0.15.1";
+          zigPinned = zig.packages.${system}."0.15.2";
           zlsPinned = zls.packages.${system}.zls.overrideAttrs (prev: {
             buildInputs = [ zigPinned ];
           });
-          inherit (pkgs) lib stdenv;
-
-          godotWrapped =
-            if stdenv.hostPlatform.isLinux then
-              pkgs.writeShellScriptBin "godot" ''
-                exec ${pkgs.nixgl.nixVulkanIntel}/bin/nixVulkanIntel \
-                     ${pkgs.nixgl.nixGLMesa}/bin/nixGLMesa \
-                     ${pkgs.godot}/bin/godot "$@"
-              ''
-            else
-              pkgs.godot;
         in
         {
           default = pkgs.mkShell {
-            buildInputs =
-              [
-                godotWrapped
-                pkgs.lldb
-                zigPinned
-                zlsPinned
-              ];
+            buildInputs = [
+              pkgs.lldb
+              zigPinned
+              zlsPinned
+            ];
           };
         }
       );
