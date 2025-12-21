@@ -360,17 +360,18 @@ const Runner = struct {
 };
 
 pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
     // Log command line args
-    var args_iter = std.process.args();
+    var args_iter = try std.process.argsWithAllocator(allocator);
+    defer args_iter.deinit();
     var arg_idx: usize = 0;
     while (args_iter.next()) |arg| {
         log.debug("arg[{d}]: {s}", .{ arg_idx, arg });
         arg_idx += 1;
     }
-
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
 
     // Set up stdin/stdout for build system communication
     var stdin_buf: [4096]u8 = undefined;
