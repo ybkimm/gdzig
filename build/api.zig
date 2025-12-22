@@ -227,6 +227,11 @@ pub fn addTestImpl(b: *Build, paths: Resolver, options: TestOptions) *Step.Run {
     });
     lib.addObject(obj);
 
+    // Link Windows socket library for networking in test server
+    if (options.target.result.os.tag == .windows) {
+        lib.linkSystemLibrary("ws2_32");
+    }
+
     const install_subdir = b.fmt("test/{s}", .{options.name});
     const install_ext = b.addInstallArtifact(lib, .{
         .dest_dir = .{ .override = .{ .custom = install_subdir } },
