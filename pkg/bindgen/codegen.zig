@@ -31,6 +31,13 @@ fn writeBuiltins(ctx: *const Context) !void {
             , .{ builtin.module, builtin.name });
         }
 
+        try w.writeLine(
+            \\
+            \\test {
+            \\  @import("std").testing.refAllDecls(@This());
+            \\}
+        );
+
         try writer.flush();
     }
 
@@ -300,6 +307,13 @@ fn writeClasses(ctx: *const Context) !void {
                 \\pub const {1s} = @import("class/{0s}.zig").{1s};
             , .{ class.module, class.name });
         }
+
+        try w.writeLine(
+            \\
+            \\test {
+            \\  @import("std").testing.refAllDecls(@This());
+            \\}
+        );
 
         try writer.flush();
     }
@@ -850,6 +864,13 @@ fn writeGlobals(ctx: *const Context) !void {
                 \\pub const {1s} = @import("global/{0s}.zig").{1s};
             , .{ flag.module, flag.name });
         }
+
+        // try w.writeLine(
+        //     \\
+        //     \\test {
+        //     \\  @import("std").testing.refAllDecls(@This());
+        //     \\}
+        // );
 
         try writer.flush();
     }

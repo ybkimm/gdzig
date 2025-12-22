@@ -10,8 +10,8 @@
             .hash = "bbcodez-0.0.1-dev-YlrOBo-iAQBWdgFSZ5eINgMNAZlmrHLQ35zKSZEEqgS2",
         },
         .casez = .{
-            .url = "git+https://github.com/gdzig/casez#f53ad26e94a005d25b099f2a1656b1ce4060f14b",
-            .hash = "casez-0.0.1-aTb4GjaDAAA880DFLQTEOUjvx5q-zOQqicxd7kg-fw5_",
+            .url = "git+https://github.com/gdzig/casez#9732adbfd8c591ddd6e9c3feab016bf9af779d6c",
+            .hash = "casez-0.0.1-aTb4GruMAAB_mjFKqes-KoN2jNXSLpB856W-8ZL22krx",
         },
         .emsdk = .{
             .url = "https://github.com/emscripten-core/emsdk/archive/refs/tags/4.0.20.tar.gz",

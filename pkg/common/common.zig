@@ -1,36 +1,48 @@
 pub const godot_case = struct {
-    pub const constant: Config = .constant;
-    pub const func: Config = .snake;
-    pub const method: Config = .snake;
-    pub const property: Config = .snake;
-    pub const signal: Config = .snake;
-    pub const @"type": Config = .pascal;
-    pub const virtual_method: Config = .withPrefix(.snake, "_");
+    pub const constant: Config = .with(.constant, .{ .dictionary = dictionary });
+    pub const func: Config = .with(.snake, .{ .dictionary = dictionary });
+    pub const method: Config = .with(.snake, .{ .dictionary = dictionary });
+    pub const property: Config = .with(.snake, .{ .dictionary = dictionary });
+    pub const signal: Config = .with(.snake, .{ .dictionary = dictionary });
+    pub const @"type": Config = .with(.pascal, .{
+        .dictionary = dictionary,
+        .acronym = .upper,
+        .digit_boundary = true,
+    });
+    pub const virtual_method: Config = .with(.snake, .{
+        .dictionary = dictionary,
+        .prefix = "_",
+    });
 };
 
 pub const gdzig_case = struct {
-    pub const constant: Config = .constant;
-    pub const file: Config = .snake;
-    pub const func: Config = .camel;
-    pub const method: Config = .camel;
-    pub const signal: Config = .withSuffix(.snake, "Signal");
-    pub const @"type": Config = .withDictionary(.pascal, type_dictionary);
-    pub const virtual_method: Config = .withPrefix(.camel, "_");
+    pub const constant: Config = .with(.constant, .{ .dictionary = dictionary });
+    pub const file: Config = .with(.snake, .{ .dictionary = dictionary });
+    pub const func: Config = .with(.camel, .{ .dictionary = dictionary });
+    pub const method: Config = .with(.camel, .{ .dictionary = dictionary });
+    pub const signal: Config = .with(.pascal, .{ .dictionary = dictionary });
+    pub const @"type": Config = .with(.pascal, .{ .dictionary = dictionary });
+    pub const virtual_method: Config = .with(.camel, .{
+        .dictionary = dictionary,
+        .prefix = "_",
+    });
 };
 
-const type_dictionary: Config.Dictionary = .{
-    .acronyms = .initComptime(&.{
-        .{ "enet", {} },
-        .{ "vrs", {} },
-        .{ "xr", {} },
-    }),
-    .splits = .initComptime(&.{
-        .{ "2drd", &.{ "2d", "rd" } },
-        .{ "3drd", &.{ "3d", "rd" } },
-        .{ "enet", &.{ "e", "net" } },
-        .{ "xrip", &.{ "xr", "ip" } },
-        .{ "uint", &.{"uint"} },
-    }),
+const dictionary: Config.Dictionary = .{
+    .acronyms = &.{
+        "1d",
+        "2d",
+        "3d",
+        "enet",
+        "vrs",
+        "xr",
+    },
+    .splits = &.{
+        .{ "2d", "rd" },
+        .{ "3d", "rd" },
+        .{ "e", "net" },
+        .{ "xr", "ip" },
+    },
 };
 
 /// Format helper for use with std.fmt
@@ -51,9 +63,11 @@ pub fn fmt(comptime config: Config, str: []const u8) std.fmt.Alt([]const u8, Fmt
 
 test "type name conversion" {
     inline for (&.{
-        .{ "Node", "node" },
-        .{ "RefCounted", "ref_counted" },
-        .{ "Vector2", "vector2" },
+        // .{ godot, gdzig }
+        .{ "Node", "Node" },
+        .{ "Node2D", "Node2d" },
+        .{ "RefCounted", "RefCounted" },
+        .{ "Vector2", "Vector2" },
     }) |case| {
         try testing.expectEqualStrings(case[0], comptimeConvert(godot_case.type, case[1]));
         try testing.expectEqualStrings(case[1], comptimeConvert(gdzig_case.type, case[0]));
@@ -71,6 +85,7 @@ test "type name acronyms" {
 
 test "method name conversion" {
     inline for (&.{
+        // .{ godot, gdzig }
         .{ "get_node", "getNode" },
         .{ "add_child", "addChild" },
     }) |case| {
@@ -81,13 +96,14 @@ test "method name conversion" {
 
 test "virtual method conversion" {
     inline for (&.{
+        // .{ godot, gdzig }
         .{ "_enter_tree", "_enterTree" },
         .{ "_ready", "_ready" },
         .{ "_process", "_process" },
         .{ "_physics_process", "_physicsProcess" },
-        .{ "_get_http_response", "_getHTTPResponse" },
-        .{ "_parse_url_string", "_parseURLString" },
-        .{ "_get_id", "_getID" },
+        .{ "_get_http_response", "_getHttpResponse" },
+        .{ "_parse_url_string", "_parseUrlString" },
+        .{ "_get_id", "_getId" },
     }) |case| {
         try testing.expectEqualStrings(case[0], comptimeConvert(godot_case.virtual_method, case[1]));
         try testing.expectEqualStrings(case[1], comptimeConvert(gdzig_case.virtual_method, case[0]));
@@ -96,8 +112,9 @@ test "virtual method conversion" {
 
 test "signal name conversion" {
     inline for (&.{
-        .{ "tree_entered", "treeEntered" },
-        .{ "child_exited_tree", "childExitedTree" },
+        // .{ godot, gdzig }
+        .{ "tree_entered", "TreeEntered" },
+        .{ "child_exited_tree", "ChildExitedTree" },
     }) |case| {
         try testing.expectEqualStrings(case[0], comptimeConvert(godot_case.signal, case[1]));
         try testing.expectEqualStrings(case[1], comptimeConvert(gdzig_case.signal, case[0]));

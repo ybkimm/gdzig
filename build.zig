@@ -135,7 +135,9 @@ pub fn build(b: *Build) !void {
     //
 
     const tests_gdzig = b.addTest(.{ .root_module = gdzig_mod });
+    const tests_common = b.addTest(.{ .root_module = common_mod });
     const tests_gdzig_run = b.addRunArtifact(tests_gdzig);
+    const tests_common_run = b.addRunArtifact(tests_common);
 
     var tests_dir = try std.fs.cwd().openDir(b.path("test").getPath2(b, null), .{ .iterate = true });
     defer tests_dir.close();
@@ -168,6 +170,7 @@ pub fn build(b: *Build) !void {
 
     check_step.dependOn(&gdzig_lib.step);
     test_step.dependOn(&tests_gdzig_run.step);
+    test_step.dependOn(&tests_common_run.step);
 
     //
     // Default step
