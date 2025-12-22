@@ -25,12 +25,14 @@ pub fn register(r: *gdzig.extension.Registry) void {
     combat.addProperty("armor", .auto);
     combat.addProperty("damage", .auto);
 
-    // Indexed properties - shared getter/setter with index parameter
-    const get_slot = class.createMethod("get_inventory_slot", .auto);
-    const set_slot = class.createMethod("set_inventory_slot", .auto);
-    class.addProperty("slot_0", .{ .getter = .{ .method = get_slot }, .setter = .{ .method = set_slot }, .index = 0 });
-    class.addProperty("slot_1", .{ .getter = .{ .method = get_slot }, .setter = .{ .method = set_slot }, .index = 1 });
-    class.addProperty("slot_2", .{ .getter = .{ .method = get_slot }, .setter = .{ .method = set_slot }, .index = 2 });
+    // Indexed properties - shared getter/setter with index parameter (requires Godot 4.2+)
+    if (gdzig.version.gte(.@"4.2")) {
+        const get_slot = class.createMethod("get_inventory_slot", .auto);
+        const set_slot = class.createMethod("set_inventory_slot", .auto);
+        class.addProperty("slot_0", .{ .getter = .{ .method = get_slot }, .setter = .{ .method = set_slot }, .index = 0 });
+        class.addProperty("slot_1", .{ .getter = .{ .method = get_slot }, .setter = .{ .method = set_slot }, .index = 1 });
+        class.addProperty("slot_2", .{ .getter = .{ .method = get_slot }, .setter = .{ .method = set_slot }, .index = 2 });
+    }
 }
 
 fn ensureRegistered() void {
@@ -121,7 +123,7 @@ test "indexed properties" {
     ensureRegistered();
 
     // Indexed properties require Godot 4.2+
-    if (!gdzig.version.gte(.@"4.2")) return error.SkipZigTest;
+    if (!gdzig.version.gte(.@"4.2")) return;
 
     const node = try PropertyNode.create();
     defer node.destroy();

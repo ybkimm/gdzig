@@ -118,8 +118,11 @@ pub const Variant = extern struct {
                 .packed_vector2_array,
                 .packed_vector3_array,
                 .packed_color_array,
-                .packed_vector4_array,
                 => @compileError("Packed arrays cannot be wrapped; use init() instead"),
+                .packed_vector4_array => if (has_packed_vector4_array)
+                    @compileError("Packed arrays cannot be wrapped; use init() instead")
+                else
+                    unreachable,
             },
         };
     }
@@ -527,7 +530,7 @@ pub const Variant = extern struct {
         packed_vector2_array = c.GDEXTENSION_VARIANT_TYPE_PACKED_VECTOR2_ARRAY,
         packed_vector3_array = c.GDEXTENSION_VARIANT_TYPE_PACKED_VECTOR3_ARRAY,
         packed_color_array = c.GDEXTENSION_VARIANT_TYPE_PACKED_COLOR_ARRAY,
-        packed_vector4_array = c.GDEXTENSION_VARIANT_TYPE_PACKED_VECTOR4_ARRAY,
+        packed_vector4_array = if (@hasDecl(c, "GDEXTENSION_VARIANT_TYPE_PACKED_VECTOR4_ARRAY")) c.GDEXTENSION_VARIANT_TYPE_PACKED_VECTOR4_ARRAY else 39,
         // max = c.GDEXTENSION_VARIANT_TYPE_VARIANT_MAX,
 
         pub fn forValue(value: anytype) Tag {
@@ -575,11 +578,16 @@ pub const Variant = extern struct {
                 Vector4 => .vector4,
                 Vector4i => .vector4i,
                 void => .nil,
-                inline else => switch (@typeInfo(T)) {
-                    .@"enum" => .int,
-                    .@"struct" => |info| if (info.backing_integer != null) .int else null,
-                    .pointer => |p| if (class.isClassPtr(T)) .object else forType(p.child),
-                    else => null,
+                inline else => blk: {
+                    if (has_packed_vector4_array and T == PackedVector4Array) {
+                        break :blk .packed_vector4_array;
+                    }
+                    break :blk switch (@typeInfo(T)) {
+                        .@"enum" => .int,
+                        .@"struct" => |info| if (info.backing_integer != null) .int else null,
+                        .pointer => |p| if (class.isClassPtr(T)) .object else forType(p.child),
+                        else => null,
+                    };
                 },
             };
 
@@ -629,8 +637,8 @@ pub const Variant = extern struct {
                 .packed_vector2_array,
                 .packed_vector3_array,
                 .packed_color_array,
-                .packed_vector4_array,
                 => true,
+                .packed_vector4_array => has_packed_vector4_array,
                 else => false,
             };
         }
@@ -672,7 +680,7 @@ pub const Variant = extern struct {
         packed_string_array: *PackedArrayRef(PackedStringArray),
         packed_vector2_array: *PackedArrayRef(PackedVector2Array),
         packed_vector3_array: *PackedArrayRef(PackedVector3Array),
-        packed_vector4_array: *PackedArrayRef(PackedVector4Array),
+        packed_vector4_array: if (has_packed_vector4_array) *PackedArrayRef(PackedVector4Array) else void,
         plane: Plane,
         projection: *Projection,
         quaternion: Quaternion,
@@ -846,7 +854,8 @@ const PackedInt64Array = gdzig.builtin.PackedInt64Array;
 const PackedStringArray = gdzig.builtin.PackedStringArray;
 const PackedVector2Array = gdzig.builtin.PackedVector2Array;
 const PackedVector3Array = gdzig.builtin.PackedVector3Array;
-const PackedVector4Array = gdzig.builtin.PackedVector4Array;
+const has_packed_vector4_array = @hasDecl(gdzig.builtin, "PackedVector4Array");
+const PackedVector4Array = if (has_packed_vector4_array) gdzig.builtin.PackedVector4Array else void;
 const Plane = gdzig.builtin.Plane;
 const Projection = gdzig.builtin.Projection;
 const Quaternion = gdzig.builtin.Quaternion;
