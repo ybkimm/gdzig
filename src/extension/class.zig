@@ -1,19 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const MemoryPool = std.heap.MemoryPool;
-const assert = std.debug.assert;
-
-const c = @import("gdextension");
-const common = @import("common");
-const GeneralPurposeAllocator = common.GeneralPurposeAllocator;
-const gdzig = @import("gdzig");
-const class = gdzig.class;
-const classdb = gdzig.class.ClassDb;
-const ClassInfo4 = gdzig.class.ClassDb.ClassInfo4;
-const String = gdzig.builtin.String;
-const StringName = gdzig.builtin.StringName;
-const Object = gdzig.class.Object;
-
 pub fn registerClass(comptime T: type, info: ClassInfo4(ClassUserdataOf(T))) void {
     const class_name: StringName = .fromType(T);
     const base_name: StringName = .fromType(class.BaseOf(T));
@@ -90,7 +74,7 @@ pub fn ClassUserdataOf(comptime T: type) type {
 pub const PropertyListInstanceBinding = struct {
     len: usize = 0,
 
-    var gpa: GeneralPurposeAllocator = .init(gdzig.engine_allocator);
+    var gpa: GeneralPurposeAllocator = .init;
     const allocator = gpa.allocator();
     var pool: MemoryPool(PropertyListInstanceBinding) = .init(allocator);
 
@@ -118,7 +102,7 @@ pub const DestroyInstanceBinding = struct {
     user_destroying: bool = false,
     engine_destroying: bool = false,
 
-    var gpa: GeneralPurposeAllocator = .init(gdzig.engine_allocator);
+    var gpa: GeneralPurposeAllocator = .init;
     const allocator = gpa.allocator();
     var pool: MemoryPool(PropertyListInstanceBinding) = .init(allocator);
 
@@ -453,3 +437,19 @@ fn virtualMethodNames(comptime T: type) []const []const u8 {
 
     return names[0..count];
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const MemoryPool = std.heap.MemoryPool;
+const assert = std.debug.assert;
+
+const c = @import("gdextension");
+const common = @import("common");
+const gdzig = @import("gdzig");
+const class = gdzig.class;
+const classdb = gdzig.class.ClassDb;
+const ClassInfo4 = gdzig.class.ClassDb.ClassInfo4;
+const String = gdzig.builtin.String;
+const StringName = gdzig.builtin.StringName;
+const Object = gdzig.class.Object;
+const GeneralPurposeAllocator = gdzig.heap.GeneralPurposeAllocator;

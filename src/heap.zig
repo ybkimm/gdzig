@@ -1,3 +1,5 @@
+pub const GeneralPurposeAllocator = @import("heap/GeneralPurposeAllocator.zig");
+
 pub const engine_allocator: Allocator = .{
     .ptr = undefined,
     .vtable = &.{

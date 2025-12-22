@@ -16,7 +16,9 @@
 pub const c = @import("gdextension");
 pub const builtin = @import("builtin.zig");
 pub const class = @import("class.zig");
-pub const engine_allocator = @import("heap.zig").engine_allocator;
+pub const heap = @import("heap.zig");
+pub const engine_allocator = heap.engine_allocator;
+pub const GeneralPurposeAllocator = heap.GeneralPurposeAllocator;
 pub const general = @import("general.zig");
 pub const global = @import("global.zig");
 pub const math = @import("math.zig");

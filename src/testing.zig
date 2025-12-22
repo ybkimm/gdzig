@@ -51,7 +51,7 @@
 pub const allocator = allocator_instance.allocator();
 pub var allocator_instance: GeneralPurposeAllocator = b: {
     if (!builtin.is_test) @compileError("testing allocator used when not testing");
-    break :b .init(gdzig.engine_allocator);
+    break :b .init;
 };
 
 pub var registry: Registry = if (builtin.is_test) .init(allocator) else unreachable;
@@ -65,8 +65,8 @@ pub fn loadModule(comptime Module: type) void {
 }
 
 const builtin = @import("builtin");
-const common = @import("common");
-const GeneralPurposeAllocator = common.GeneralPurposeAllocator;
 
+const common = @import("common");
 const gdzig = @import("gdzig");
 const Registry = gdzig.extension.Registry;
+const GeneralPurposeAllocator = gdzig.heap.GeneralPurposeAllocator;
