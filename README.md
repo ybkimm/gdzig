@@ -18,7 +18,7 @@ See the [example](example/) folder for reference.
 
 ## Code Sample:
 
-https://github.com/gdzig/gdzig/blob/84b0828f491d6e9e330b1c1e6a9b84d28dcdacbf/example/src/GuiNode.zig#L6-L32
+https://github.com/gdzig/gdzig/blob/1cdfec61d185a9440e6419b122a08e003ad3dcde/example/src/GuiNode.zig#L1-L56
 
 # Community
 
