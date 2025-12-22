@@ -258,13 +258,18 @@ pub fn addTestImpl(b: *Build, paths: Resolver, options: TestOptions) *Step.Run {
         .name = b.fmt("test-{s}", .{options.name}),
         .root_module = b.createModule(.{
             .root_source_file = paths.path("src/testing/coordinator.zig"),
-            .target = b.graph.host,
+            .target = options.target,
             .optimize = .Debug,
             .imports = &.{
                 .{ .name = "runner_options", .module = runner_options.createModule() },
             },
         }),
     });
+
+    // Link Windows socket library for networking in coordinator
+    if (options.target.result.os.tag == .windows) {
+        coordinator.linkSystemLibrary("ws2_32");
+    }
 
     const run = b.addRunArtifact(coordinator);
     run.enableTestRunnerMode();

@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const posix = std.posix;
 const protocol = @import("protocol.zig");
 const options = @import("runner_options");
 
@@ -18,6 +19,9 @@ const ZigServer = std.zig.Server;
 const ZigClient = std.zig.Client;
 
 const log = std.log.scoped(.gdzig_testing);
+
+/// Timeout for waiting for Godot to connect (in milliseconds)
+const ACCEPT_TIMEOUT_MS = 30_000;
 
 pub const std_options: std.Options = .{
     // Set gdzig_testing scope to .warn by default (silent)
@@ -161,9 +165,20 @@ const Runner = struct {
         }
         log.debug("  godot spawned, pid={d}", .{child.id});
 
-        // Accept connection
-        log.debug("  waiting for connection...", .{});
-        var conn = try listener.accept();
+        // Accept connection with timeout
+        log.debug("  waiting for connection (timeout: {d}ms)...", .{ACCEPT_TIMEOUT_MS});
+        var conn = acceptWithTimeout(&listener, ACCEPT_TIMEOUT_MS) catch |err| {
+            if (err == error.Timeout) {
+                log.debug("  timeout waiting for Godot to connect", .{});
+                // Collect Godot output to help diagnose the issue
+                const output = self.collectGodotOutput(&child) catch "";
+                defer if (output.len > 0) self.allocator.free(output);
+                if (output.len > 0) {
+                    std.debug.print("Godot output (timed out):\n{s}\n", .{output});
+                }
+            }
+            return err;
+        };
         defer conn.stream.close();
         log.debug("  connection accepted!", .{});
 
@@ -239,8 +254,18 @@ const Runner = struct {
             _ = child.wait() catch {};
         }
 
-        // Accept connection
-        var conn = try listener.accept();
+        // Accept connection with timeout
+        var conn = acceptWithTimeout(&listener, ACCEPT_TIMEOUT_MS) catch |err| {
+            if (err == error.Timeout) {
+                // Collect Godot output to help diagnose the issue
+                const output = self.collectGodotOutput(&child) catch "";
+                defer if (output.len > 0) self.allocator.free(output);
+                if (output.len > 0) {
+                    std.debug.print("Godot output (timed out):\n{s}\n", .{output});
+                }
+            }
+            return err;
+        };
         defer conn.stream.close();
 
         // Set up buffered I/O
@@ -323,30 +348,19 @@ const Runner = struct {
     }
 
     fn spawnGodot(self: *Runner, folder: []const u8, port: u16) !std.process.Child {
-        _ = self;
+        // Format port as string (must be heap-allocated to outlive this function)
+        const port_str = std.fmt.allocPrint(self.allocator, "{d}", .{port}) catch unreachable;
+        defer self.allocator.free(port_str);
 
-        // Format port as string
-        var port_buf: [8]u8 = undefined;
-        const port_str = std.fmt.bufPrint(&port_buf, "{d}", .{port}) catch unreachable;
-
-        var env_map = std.process.EnvMap.init(std.heap.page_allocator);
+        // Copy existing environment and add our port
+        var env_map = std.process.getEnvMap(self.allocator) catch return error.EnvironmentError;
         defer env_map.deinit();
 
-        // Copy existing environment
-        var env_iter = try std.process.getEnvMap(std.heap.page_allocator);
-        defer env_iter.deinit();
-
-        var it = env_iter.iterator();
-        while (it.next()) |entry| {
-            try env_map.put(entry.key_ptr.*, entry.value_ptr.*);
-        }
-
-        // Add our port
         try env_map.put("GDZIG_TEST_PORT", port_str);
 
         var child = std.process.Child.init(
             &.{ options.godot_exe, "--headless", "--quiet", "-e", "--path", folder, "--quit-after", "60" },
-            std.heap.page_allocator,
+            self.allocator,
         );
         child.env_map = &env_map;
         // CRITICAL: Don't let Godot's stdout/stderr pollute our protocol stream
@@ -358,6 +372,62 @@ const Runner = struct {
         return child;
     }
 };
+
+/// Accept a connection with a timeout using poll.
+/// Returns error.Timeout if no connection is received within the timeout period.
+fn acceptWithTimeout(listener: *std.net.Server, timeout_ms: i32) !std.net.Server.Connection {
+    // Use platform-appropriate poll types
+    const native_os = builtin.os.tag;
+    if (native_os == .windows) {
+        const ws2_32 = std.os.windows.ws2_32;
+        var pollfds = [_]ws2_32.pollfd{
+            .{
+                .fd = listener.stream.handle,
+                .events = ws2_32.POLL.RDNORM, // POLLRDNORM for incoming connections on Windows
+                .revents = 0,
+            },
+        };
+
+        const result = std.os.windows.poll(&pollfds, 1, timeout_ms);
+        if (result == ws2_32.SOCKET_ERROR) {
+            log.debug("WSAPoll error: {}", .{ws2_32.WSAGetLastError()});
+            return error.Unexpected;
+        }
+
+        if (result == 0) {
+            return error.Timeout;
+        }
+
+        if (pollfds[0].revents & ws2_32.POLL.RDNORM != 0) {
+            return listener.accept();
+        }
+
+        return error.Unexpected;
+    } else {
+        var pollfds = [_]posix.pollfd{
+            .{
+                .fd = listener.stream.handle,
+                .events = posix.POLL.IN,
+                .revents = 0,
+            },
+        };
+
+        const result = posix.poll(&pollfds, timeout_ms) catch |err| {
+            log.debug("poll error: {}", .{err});
+            return err;
+        };
+
+        if (result == 0) {
+            return error.Timeout;
+        }
+
+        if (pollfds[0].revents & posix.POLL.IN != 0) {
+            return listener.accept();
+        }
+
+        return error.Unexpected;
+    }
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
