@@ -6,12 +6,17 @@
 //! 3. Communicates with test harnesses via TCP using our protocol
 //!
 //! The coordinator maintains a mapping from global test indices to (folder, local_index) pairs.
+//!
+//! For standalone test execution without the build system, run Godot directly:
+//! ```
+//! godot --headless --quiet --path ./zig-out/test/classdb
+//! ```
+//! The test harness will automatically run all tests when GDZIG_TEST_PORT is not set.
 
 const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
 const protocol = @import("protocol.zig");
-const options = @import("runner_options");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -22,6 +27,12 @@ const log = std.log.scoped(.gdzig_testing);
 
 /// Timeout for waiting for Godot to connect (in milliseconds)
 const ACCEPT_TIMEOUT_MS = 30_000;
+
+/// Runtime configuration from build-time options
+const Config = struct {
+    godot_exe: []const u8,
+    test_folders: []const []const u8,
+};
 
 pub const std_options: std.Options = .{
     // Set gdzig_testing scope to .warn by default (silent)
@@ -40,19 +51,23 @@ const TestMapping = struct {
 /// State for the test runner
 const Runner = struct {
     allocator: Allocator,
+    config: Config,
     server: ZigServer,
     test_mappings: std.ArrayList(TestMapping),
     string_bytes: std.ArrayList(u8),
     test_name_indices: std.ArrayList(u32),
 
-    fn init(allocator: Allocator, in: *Io.Reader, out: *Io.Writer) !Runner {
+    fn init(allocator: Allocator, config: Config, in: *Io.Reader, out: *Io.Writer) !Runner {
+        const server = try ZigServer.init(.{
+            .in = in,
+            .out = out,
+            .zig_version = builtin.zig_version_string,
+        });
+
         return .{
             .allocator = allocator,
-            .server = try ZigServer.init(.{
-                .in = in,
-                .out = out,
-                .zig_version = builtin.zig_version_string,
-            }),
+            .config = config,
+            .server = server,
             .test_mappings = .empty,
             .string_bytes = .empty,
             .test_name_indices = .empty,
@@ -67,14 +82,16 @@ const Runner = struct {
 
     fn run(self: *Runner) !void {
         log.debug("runner started, waiting for messages from build system", .{});
-        log.debug("test_folders: {d}", .{options.test_folders.len});
-        for (options.test_folders) |folder| {
+        log.debug("test_folders: {d}", .{self.config.test_folders.len});
+        for (self.config.test_folders) |folder| {
             log.debug("  folder: {s}", .{folder});
         }
 
+        const server = &self.server;
+
         while (true) {
             log.debug("waiting for message...", .{});
-            const header = self.server.receiveMessage() catch |err| {
+            const header = server.receiveMessage() catch |err| {
                 log.debug("receiveMessage error: {}", .{err});
                 // End of input from build system
                 if (err == error.EndOfStream) break;
@@ -93,14 +110,14 @@ const Runner = struct {
                     try self.handleQueryTestMetadata();
                 },
                 .run_test => {
-                    const index = try self.server.receiveBody_u32();
+                    const index = try server.receiveBody_u32();
                     log.debug("run_test requested: index={d}", .{index});
                     try self.handleRunTest(index);
                 },
                 else => {
                     log.debug("unknown message, skipping {d} bytes", .{header.bytes_len});
                     // Unknown message, skip body
-                    _ = try self.server.in.discard(Io.Limit.limited(header.bytes_len));
+                    _ = try server.in.discard(Io.Limit.limited(header.bytes_len));
                 },
             }
         }
@@ -115,7 +132,7 @@ const Runner = struct {
         self.test_name_indices.clearRetainingCapacity();
 
         // Collect metadata from each test folder
-        for (options.test_folders, 0..) |folder, folder_idx| {
+        for (self.config.test_folders, 0..) |folder, folder_idx| {
             try self.collectFolderMetadata(folder, @intCast(folder_idx));
         }
         log.debug("handleQueryTestMetadata: collected {d} tests", .{self.test_name_indices.items.len});
@@ -152,7 +169,7 @@ const Runner = struct {
         log.debug("  listening on port {d}", .{port});
 
         // Spawn Godot
-        log.debug("  spawning godot: {s}", .{options.godot_exe});
+        log.debug("  spawning godot: {s}", .{self.config.godot_exe});
         var child = try self.spawnGodot(folder, port);
         defer {
             // Collect and log Godot output before waiting
@@ -239,7 +256,7 @@ const Runner = struct {
         }
 
         const mapping = self.test_mappings.items[global_index];
-        const folder = options.test_folders[mapping.folder_index];
+        const folder = self.config.test_folders[mapping.folder_index];
 
         // Start TCP listener
         const address = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 0);
@@ -359,7 +376,7 @@ const Runner = struct {
         try env_map.put("GDZIG_TEST_PORT", port_str);
 
         var child = std.process.Child.init(
-            &.{ options.godot_exe, "--headless", "--quiet", "--path", folder, "--quit-after", "60" },
+            &.{ self.config.godot_exe, "--headless", "--quiet", "--path", folder, "--quit-after", "60" },
             self.allocator,
         );
         child.env_map = &env_map;
@@ -434,23 +451,26 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // Log command line args
-    var args_iter = try std.process.argsWithAllocator(allocator);
-    defer args_iter.deinit();
-    var arg_idx: usize = 0;
-    while (args_iter.next()) |arg| {
-        log.debug("arg[{d}]: {s}", .{ arg_idx, arg });
-        arg_idx += 1;
-    }
+    // Use build-time options
+    const options = @import("runner_options");
+    const config: Config = .{
+        .godot_exe = options.godot_exe,
+        .test_folders = options.test_folders,
+    };
 
-    // Set up stdin/stdout for build system communication
+    log.debug("config: godot_exe={s}, folders={d}", .{
+        config.godot_exe,
+        config.test_folders.len,
+    });
+
+    // Communicate with build system via stdin/stdout
     var stdin_buf: [4096]u8 = undefined;
     var stdout_buf: [4096]u8 = undefined;
 
     var stdin_reader = std.fs.File.Reader.initStreaming(std.fs.File.stdin(), &stdin_buf);
     var stdout_writer = std.fs.File.Writer.initStreaming(std.fs.File.stdout(), &stdout_buf);
 
-    var runner = try Runner.init(allocator, &stdin_reader.interface, &stdout_writer.interface);
+    var runner = try Runner.init(allocator, config, &stdin_reader.interface, &stdout_writer.interface);
     defer runner.deinit();
     log.debug("runner initialized", .{});
 

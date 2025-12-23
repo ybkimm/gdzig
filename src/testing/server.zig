@@ -27,7 +27,8 @@ fn runImpl(allocator: std.mem.Allocator) !void {
 
     const port_str = std.process.getEnvVarOwned(allocator, "GDZIG_TEST_PORT") catch |err| {
         if (err == error.EnvironmentVariableNotFound) {
-            log.debug("GDZIG_TEST_PORT not set, skipping test server", .{});
+            log.debug("GDZIG_TEST_PORT not set, running tests directly", .{});
+            runAllTestsDirectly(allocator);
             return;
         }
         log.debug("failed to get GDZIG_TEST_PORT: {}", .{err});
@@ -139,6 +140,39 @@ const builtin = @import("builtin");
 
 fn getTestFunctions() []const TestFn {
     return builtin.test_functions;
+}
+
+/// Run all tests directly without coordinator, printing results to stdout.
+/// Used when GDZIG_TEST_PORT is not set (standalone mode).
+fn runAllTestsDirectly(allocator: std.mem.Allocator) void {
+    const test_fns = getTestFunctions();
+    const total = test_fns.len;
+
+    std.debug.print("\nRunning {d} tests...\n\n", .{total});
+
+    var passed: usize = 0;
+    var failed: usize = 0;
+
+    for (test_fns, 0..) |test_fn, i| {
+        std.debug.print("[{d}/{d}] {s}... ", .{ i + 1, total, test_fn.name });
+
+        const result = runSingleTest(allocator, test_fn);
+        if (result.passed) {
+            std.debug.print("PASS\n", .{});
+            passed += 1;
+        } else {
+            std.debug.print("FAIL\n", .{});
+            failed += 1;
+        }
+    }
+
+    std.debug.print("\nResults: {d} passed, {d} failed, {d} total\n", .{ passed, failed, total });
+
+    if (failed > 0) {
+        std.debug.print("FAILED\n", .{});
+    } else {
+        std.debug.print("OK\n", .{});
+    }
 }
 
 const SingleTestResult = struct {
