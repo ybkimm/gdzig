@@ -1,211 +1,251 @@
-//! Simple binary protocol for communication between test runner and Godot extension.
+//! JSON-based IPC protocol for test communication.
 //!
-//! Message format: [tag: u8][length: u32 little-endian][payload: [length]u8]
+//! Uses newline-delimited JSON over stdin/stdout. Messages are identified
+//! by the presence of `"__gdzig__": "test_ipc"` field, allowing Godot's
+//! normal output to be filtered out.
 //!
-//! Messages:
-//! - query_test_metadata: no payload → response: test_metadata
-//! - test_metadata: [count: u32][names: [count]LengthPrefixedString]
-//! - run_test: [index: u32]
-//! - test_result: [index: u32][passed: u8][message_len: u32][message: [message_len]u8]
-//! - exit: no payload
+//! Commands (coordinator -> extension via stdin):
+//! - {"__gdzig__":"test_ipc","cmd":"query_metadata"}
+//! - {"__gdzig__":"test_ipc","cmd":"run_test","index":5}
+//! - {"__gdzig__":"test_ipc","cmd":"exit"}
+//!
+//! Responses (extension -> coordinator via stdout):
+//! - {"__gdzig__":"test_ipc","type":"metadata","tests":["test_one","test_two"]}
+//! - {"__gdzig__":"test_ipc","type":"result","index":5,"passed":true}
+//! - {"__gdzig__":"test_ipc","type":"result","index":5,"passed":false,"message":"error details"}
 
 const std = @import("std");
-const Allocator = std.mem.Allocator;
-const Io = std.Io;
 
-pub const Tag = enum(u8) {
-    query_test_metadata = 1,
-    test_metadata = 2,
-    run_test = 3,
-    test_result = 4,
-    exit = 5,
-    _,
+const MARKER = "test_ipc";
+
+/// Write a JSON-encoded string (with quotes and escaping)
+fn writeJsonString(writer: anytype, s: []const u8) !void {
+    try writer.writeByte('"');
+    for (s) |c| {
+        switch (c) {
+            '"' => try writer.writeAll("\\\""),
+            '\\' => try writer.writeAll("\\\\"),
+            '\n' => try writer.writeAll("\\n"),
+            '\r' => try writer.writeAll("\\r"),
+            '\t' => try writer.writeAll("\\t"),
+            else => {
+                if (c < 0x20) {
+                    // Control character - encode as \u00XX
+                    try writer.writeAll("\\u00");
+                    const hex = "0123456789abcdef";
+                    try writer.writeByte(hex[c >> 4]);
+                    try writer.writeByte(hex[c & 0xf]);
+                } else {
+                    try writer.writeByte(c);
+                }
+            },
+        }
+    }
+    try writer.writeByte('"');
+}
+
+pub const Command = union(enum) {
+    query_metadata,
+    run_test: u32,
+    exit,
 };
 
-pub const Message = struct {
-    tag: Tag,
-    payload: []const u8,
+pub const Response = union(enum) {
+    metadata: []const []const u8,
+    result: TestResult,
 };
 
 pub const TestResult = struct {
     index: u32,
     passed: bool,
-    message: []const u8,
+    message: ?[]const u8 = null,
 };
 
-/// Write a message to the stream.
-pub fn writeMessage(writer: *Io.Writer, tag: Tag, payload: []const u8) Io.Writer.Error!void {
-    try writer.writeByte(@intFromEnum(tag));
-    try writer.writeInt(u32, @intCast(payload.len), .little);
-    try writer.writeAll(payload);
-    try writer.flush();
+/// Check if a line is a gdzig IPC message.
+pub fn isIpcMessage(line: []const u8) bool {
+    // Quick check before parsing
+    return std.mem.indexOf(u8, line, "\"__gdzig__\"") != null and
+        std.mem.indexOf(u8, line, MARKER) != null;
 }
 
-/// Read a message from the stream into the provided buffer.
-/// Returns the tag and a slice of the buffer containing the payload.
-pub fn readMessage(reader: *Io.Reader, buf: []u8) (Io.Reader.Error || error{PayloadTooLarge})!Message {
-    const tag_byte = try reader.takeByte();
-    const length = try reader.takeInt(u32, .little);
+/// Parse a command from a JSON line.
+pub fn parseCommand(line: []const u8) ?Command {
+    const parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, line, .{}) catch return null;
+    defer parsed.deinit();
 
-    if (length > buf.len) {
-        return error.PayloadTooLarge;
+    const root = parsed.value.object;
+
+    // Verify marker
+    const marker = root.get("__gdzig__") orelse return null;
+    if (marker != .string or !std.mem.eql(u8, marker.string, MARKER)) return null;
+
+    // Get command
+    const cmd = root.get("cmd") orelse return null;
+    if (cmd != .string) return null;
+
+    if (std.mem.eql(u8, cmd.string, "query_metadata")) {
+        return .query_metadata;
+    } else if (std.mem.eql(u8, cmd.string, "run_test")) {
+        const index = root.get("index") orelse return null;
+        if (index != .integer) return null;
+        return .{ .run_test = @intCast(index.integer) };
+    } else if (std.mem.eql(u8, cmd.string, "exit")) {
+        return .exit;
     }
 
-    const payload = buf[0..length];
-    try reader.readSliceAll(payload);
-
-    return .{
-        .tag = @enumFromInt(tag_byte),
-        .payload = payload,
-    };
+    return null;
 }
 
-/// Encode test metadata (list of test names) into a payload.
-pub fn encodeTestMetadata(allocator: Allocator, names: []const []const u8) Allocator.Error![]u8 {
-    // Calculate total size
-    var total_size: usize = 4; // count
-    for (names) |name| {
-        total_size += 4 + name.len; // length prefix + string
-    }
+/// Parse a response from a JSON line. Caller must free returned slices.
+pub fn parseResponse(allocator: std.mem.Allocator, line: []const u8) !?Response {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, line, .{}) catch return null;
+    defer parsed.deinit();
 
-    const buf = try allocator.alloc(u8, total_size);
-    var pos: usize = 0;
+    const root = parsed.value.object;
 
-    // Write count
-    std.mem.writeInt(u32, buf[pos..][0..4], @intCast(names.len), .little);
-    pos += 4;
+    // Verify marker
+    const marker = root.get("__gdzig__") orelse return null;
+    if (marker != .string or !std.mem.eql(u8, marker.string, MARKER)) return null;
 
-    // Write each name
-    for (names) |name| {
-        std.mem.writeInt(u32, buf[pos..][0..4], @intCast(name.len), .little);
-        pos += 4;
-        @memcpy(buf[pos..][0..name.len], name);
-        pos += name.len;
-    }
+    // Get type
+    const msg_type = root.get("type") orelse return null;
+    if (msg_type != .string) return null;
 
-    return buf;
-}
+    if (std.mem.eql(u8, msg_type.string, "metadata")) {
+        const tests_val = root.get("tests") orelse return null;
+        if (tests_val != .array) return null;
 
-/// Iterator for decoding test metadata payload.
-pub const TestMetadataIterator = struct {
-    data: []const u8,
-    pos: usize,
-    remaining: u32,
-
-    pub fn init(payload: []const u8) TestMetadataIterator {
-        if (payload.len < 4) {
-            return .{ .data = payload, .pos = 0, .remaining = 0 };
+        var tests: std.ArrayListUnmanaged([]const u8) = .empty;
+        errdefer {
+            for (tests.items) |t| allocator.free(t);
+            tests.deinit(allocator);
         }
-        const cnt = std.mem.readInt(u32, payload[0..4], .little);
-        return .{ .data = payload, .pos = 4, .remaining = cnt };
+
+        for (tests_val.array.items) |item| {
+            if (item != .string) continue;
+            try tests.append(allocator, try allocator.dupe(u8, item.string));
+        }
+
+        return .{ .metadata = try tests.toOwnedSlice(allocator) };
+    } else if (std.mem.eql(u8, msg_type.string, "result")) {
+        const index_val = root.get("index") orelse return null;
+        if (index_val != .integer) return null;
+
+        const passed_val = root.get("passed") orelse return null;
+        if (passed_val != .bool) return null;
+
+        var message: ?[]const u8 = null;
+        if (root.get("message")) |msg_val| {
+            if (msg_val == .string) {
+                message = try allocator.dupe(u8, msg_val.string);
+            }
+        }
+
+        return .{ .result = .{
+            .index = @intCast(index_val.integer),
+            .passed = passed_val.bool,
+            .message = message,
+        } };
     }
 
-    pub fn next(self: *TestMetadataIterator) ?[]const u8 {
-        if (self.remaining == 0) return null;
-        if (self.pos + 4 > self.data.len) return null;
+    return null;
+}
 
-        const len = std.mem.readInt(u32, self.data[self.pos..][0..4], .little);
-        self.pos += 4;
+/// Free a parsed response.
+pub fn freeResponse(allocator: std.mem.Allocator, response: *Response) void {
+    switch (response.*) {
+        .metadata => |tests| {
+            for (tests) |t| allocator.free(t);
+            allocator.free(tests);
+        },
+        .result => |*r| {
+            if (r.message) |m| allocator.free(m);
+        },
+    }
+}
 
-        if (self.pos + len > self.data.len) return null;
+/// Write a command as JSON to a writer.
+pub fn writeCommand(writer: anytype, cmd: Command) !void {
+    try writer.writeAll("{\"__gdzig__\":\"");
+    try writer.writeAll(MARKER);
+    try writer.writeAll("\",\"cmd\":\"");
 
-        const name = self.data[self.pos..][0..len];
-        self.pos += len;
-        self.remaining -= 1;
+    switch (cmd) {
+        .query_metadata => try writer.writeAll("query_metadata\"}"),
+        .run_test => |index| {
+            try writer.writeAll("run_test\",\"index\":");
+            var num_buf: [16]u8 = undefined;
+            const num_str = std.fmt.bufPrint(&num_buf, "{d}", .{index}) catch unreachable;
+            try writer.writeAll(num_str);
+            try writer.writeAll("}");
+        },
+        .exit => try writer.writeAll("exit\"}"),
+    }
+    try writer.writeAll("\n");
+}
 
-        return name;
+/// Write a metadata response as JSON to a writer.
+pub fn writeMetadataResponse(writer: anytype, tests: []const []const u8) !void {
+    try writer.writeAll("{\"__gdzig__\":\"");
+    try writer.writeAll(MARKER);
+    try writer.writeAll("\",\"type\":\"metadata\",\"tests\":[");
+
+    for (tests, 0..) |name, i| {
+        if (i > 0) try writer.writeAll(",");
+        try writeJsonString(writer, name);
     }
 
-    pub fn count(self: *const TestMetadataIterator) u32 {
-        if (self.data.len < 4) return 0;
-        return std.mem.readInt(u32, self.data[0..4], .little);
-    }
-};
-
-/// Decode test metadata payload into an iterator.
-pub fn decodeTestMetadata(payload: []const u8) TestMetadataIterator {
-    return TestMetadataIterator.init(payload);
+    try writer.writeAll("]}\n");
 }
 
-/// Encode a run_test message payload.
-pub fn encodeRunTest(index: u32) [4]u8 {
-    var buf: [4]u8 = undefined;
-    std.mem.writeInt(u32, &buf, index, .little);
-    return buf;
-}
+/// Write a test result response as JSON to a writer.
+pub fn writeResultResponse(writer: anytype, index: u32, passed: bool, message: ?[]const u8) !void {
+    try writer.writeAll("{\"__gdzig__\":\"");
+    try writer.writeAll(MARKER);
+    try writer.writeAll("\",\"type\":\"result\",\"index\":");
+    var num_buf: [16]u8 = undefined;
+    const num_str = std.fmt.bufPrint(&num_buf, "{d}", .{index}) catch unreachable;
+    try writer.writeAll(num_str);
+    try writer.writeAll(",\"passed\":");
+    try writer.writeAll(if (passed) "true" else "false");
 
-/// Decode a run_test message payload.
-pub fn decodeRunTest(payload: []const u8) u32 {
-    if (payload.len < 4) return 0;
-    return std.mem.readInt(u32, payload[0..4], .little);
-}
-
-/// Encode a test_result message payload.
-pub fn encodeTestResult(allocator: Allocator, index: u32, passed: bool, message: []const u8) Allocator.Error![]u8 {
-    const buf = try allocator.alloc(u8, 4 + 1 + 4 + message.len);
-    var pos: usize = 0;
-
-    std.mem.writeInt(u32, buf[pos..][0..4], index, .little);
-    pos += 4;
-
-    buf[pos] = if (passed) 1 else 0;
-    pos += 1;
-
-    std.mem.writeInt(u32, buf[pos..][0..4], @intCast(message.len), .little);
-    pos += 4;
-
-    @memcpy(buf[pos..][0..message.len], message);
-
-    return buf;
-}
-
-/// Decode a test_result message payload.
-pub fn decodeTestResult(payload: []const u8) TestResult {
-    if (payload.len < 9) {
-        return .{ .index = 0, .passed = false, .message = "" };
+    if (message) |msg| {
+        try writer.writeAll(",\"message\":");
+        try writeJsonString(writer, msg);
     }
 
-    const index = std.mem.readInt(u32, payload[0..4], .little);
-    const passed = payload[4] != 0;
-    const msg_len = std.mem.readInt(u32, payload[5..9], .little);
-
-    const message = if (payload.len >= 9 + msg_len)
-        payload[9..][0..msg_len]
-    else
-        "";
-
-    return .{ .index = index, .passed = passed, .message = message };
+    try writer.writeAll("}\n");
 }
 
-test "encode and decode test metadata" {
-    const allocator = std.testing.allocator;
-
-    const names = &[_][]const u8{ "test one", "test two", "test three" };
-    const encoded = try encodeTestMetadata(allocator, names);
-    defer allocator.free(encoded);
-
-    var iter = decodeTestMetadata(encoded);
-    try std.testing.expectEqual(@as(u32, 3), iter.count());
-    try std.testing.expectEqualStrings("test one", iter.next().?);
-    try std.testing.expectEqualStrings("test two", iter.next().?);
-    try std.testing.expectEqualStrings("test three", iter.next().?);
-    try std.testing.expectEqual(@as(?[]const u8, null), iter.next());
+test "parse query_metadata command" {
+    const cmd = parseCommand("{\"__gdzig__\":\"test_ipc\",\"cmd\":\"query_metadata\"}");
+    try std.testing.expect(cmd != null);
+    try std.testing.expect(cmd.? == .query_metadata);
 }
 
-test "encode and decode run_test" {
-    const encoded = encodeRunTest(42);
-    const decoded = decodeRunTest(&encoded);
-    try std.testing.expectEqual(@as(u32, 42), decoded);
+test "parse run_test command" {
+    const cmd = parseCommand("{\"__gdzig__\":\"test_ipc\",\"cmd\":\"run_test\",\"index\":42}");
+    try std.testing.expect(cmd != null);
+    try std.testing.expectEqual(@as(u32, 42), cmd.?.run_test);
 }
 
-test "encode and decode test_result" {
-    const allocator = std.testing.allocator;
+test "parse exit command" {
+    const cmd = parseCommand("{\"__gdzig__\":\"test_ipc\",\"cmd\":\"exit\"}");
+    try std.testing.expect(cmd != null);
+    try std.testing.expect(cmd.? == .exit);
+}
 
-    const encoded = try encodeTestResult(allocator, 5, false, "assertion failed");
-    defer allocator.free(encoded);
+test "reject non-ipc json" {
+    const cmd = parseCommand("{\"some\":\"other json\"}");
+    try std.testing.expect(cmd == null);
+}
 
-    const decoded = decodeTestResult(encoded);
-    try std.testing.expectEqual(@as(u32, 5), decoded.index);
-    try std.testing.expectEqual(false, decoded.passed);
-    try std.testing.expectEqualStrings("assertion failed", decoded.message);
+test "reject godot output" {
+    try std.testing.expect(!isIpcMessage("Godot Engine v4.2.1"));
+    try std.testing.expect(!isIpcMessage("Loading project..."));
+    try std.testing.expect(!isIpcMessage(""));
+}
+
+test "accept ipc messages" {
+    try std.testing.expect(isIpcMessage("{\"__gdzig__\":\"test_ipc\",\"cmd\":\"exit\"}"));
 }
