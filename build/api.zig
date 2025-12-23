@@ -241,6 +241,8 @@ pub fn addTestImpl(b: *Build, paths: Resolver, options: TestOptions) *Step.Run {
     _ = project_files.add("test_extension.gdextension", generateGdextension(b, lib.out_filename));
     _ = project_files.add("project.godot", generateProjectGodot(b, options.name));
     _ = project_files.add("main.tscn", generateMainScene());
+    // Generate extension_list.cfg so Godot loads the extension without editor mode
+    _ = project_files.add(".godot/extension_list.cfg", "res://test_extension.gdextension\n");
 
     const install_project = b.addInstallDirectory(.{
         .source_dir = project_files.getDirectory(),
