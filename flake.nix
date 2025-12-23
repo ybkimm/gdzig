@@ -51,7 +51,6 @@
             ++ pkgs.lib.optionals (system == "x86_64-linux") [
               # Wine for cross-platform testing with -fwine
               pkgs.wineWowPackages.stable
-              pkgs.darling
             ];
           };
         }

@@ -202,10 +202,7 @@ const Runner = struct {
 
         // If test failed, print Godot's output to stderr so user sees stack trace
         if (failed and godot_output.items.len > 0) {
-            var stderr_buf: [4096]u8 = undefined;
-            var stderr = std.fs.File.Writer.initStreaming(std.fs.File.stderr(), &stderr_buf);
-            stderr.interface.writeAll(godot_output.items) catch {};
-            stderr.interface.flush() catch {};
+            std.fs.File.stderr().writeAll(godot_output.items) catch {};
         }
 
         // Send result to build system
@@ -232,21 +229,32 @@ const Runner = struct {
 
     /// Read lines from Godot's stdout until we get an IPC response.
     /// Non-IPC lines are collected in godot_output for error display.
+    /// Uses direct read() to avoid Windows pipe issues with pread/overlapped I/O.
+    /// See: https://github.com/ziglang/zig/issues/25291
     fn readResponse(self: *Runner, child: *std.process.Child, godot_output: *std.ArrayListUnmanaged(u8)) !?protocol.Response {
         const stdout = child.stdout orelse return null;
-        var read_buf: [4096]u8 = undefined;
-        var reader = std.fs.File.Reader.initStreaming(stdout, &read_buf);
         var line_buf: std.ArrayListUnmanaged(u8) = .empty;
         defer line_buf.deinit(self.allocator);
+
+        var read_buf: [4096]u8 = undefined;
+        var buf_start: usize = 0;
+        var buf_end: usize = 0;
 
         while (true) {
             // Read bytes until we find a newline
             line_buf.clearRetainingCapacity();
             while (true) {
-                const byte = reader.interface.takeByte() catch |err| {
-                    if (err == error.EndOfStream) return null;
-                    return null;
-                };
+                // Refill buffer if empty
+                if (buf_start >= buf_end) {
+                    const n = stdout.read(&read_buf) catch return null;
+                    if (n == 0) return null; // EOF
+                    buf_start = 0;
+                    buf_end = n;
+                }
+
+                const byte = read_buf[buf_start];
+                buf_start += 1;
+
                 if (byte == '\n') break;
                 try line_buf.append(self.allocator, byte);
             }
