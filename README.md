@@ -9,8 +9,10 @@ expected until a stable version is released. Issue reports, feature requests, an
 
 ## Prerequisites
 
-1. zig 0.15.1
-2. godot 4.4
+1. zig 0.15.1+
+2. godot 4.4+
+
+**Note:** We are targeting stable releases of Zig only. 0.16.x is not currently supported.
 
 ## Usage:
 
