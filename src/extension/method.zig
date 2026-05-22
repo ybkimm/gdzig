@@ -113,12 +113,11 @@ pub fn MethodConfig(comptime Class: type) type {
                     }
                     if (ReturnType == void) {
                         @call(.auto, method, call_args);
-                    } else {
-                        const result = @call(.auto, method, call_args);
-                        if (ret) |r| {
-                            @as(*ReturnType, @ptrCast(@alignCast(r))).* = result;
-                        }
+                        return;
                     }
+                    const result = @call(.auto, method, call_args);
+                    const r = ret orelse return;
+                    @as(*ReturnType, @ptrCast(@alignCast(r))).* = result;
                 }
 
                 fn ptrToArg(comptime ArgType: type, p_arg: *const anyopaque) ArgType {

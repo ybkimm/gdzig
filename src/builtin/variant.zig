@@ -19,6 +19,11 @@ pub const Variant = extern struct {
 
     /// Copies the value in, returning an owned Variant. This must be coupled with a call to `deinit`.
     pub fn init(comptime T: type, value: T) Variant {
+        if (comptime @typeInfo(T) == .optional) {
+            if (value) |v| return init(@typeInfo(T).optional.child, v);
+            return .nil;
+        }
+
         const tag = comptime Tag.forType(T);
 
         if (tag == .object) {
@@ -64,6 +69,14 @@ pub const Variant = extern struct {
     ///
     /// Calling `deinit` on the returned value is illegal behavior.
     pub fn wrap(comptime T: type, value: *const T) Variant {
+        if (comptime @typeInfo(T) == .optional) {
+            if (value.*) |v| {
+                const Inner = @typeInfo(T).optional.child;
+                return wrap(Inner, &v);
+            }
+            return .nil;
+        }
+
         const tag = comptime Tag.forType(T);
         return .{
             .tag = tag,
@@ -135,6 +148,12 @@ pub const Variant = extern struct {
     }
 
     pub fn as(self: Variant, comptime T: type) ?T {
+        if (comptime @typeInfo(T) == .optional) {
+            if (self.tag == .nil) return null;
+            const Inner = @typeInfo(T).optional.child;
+            return self.as(Inner);
+        }
+
         const tag = comptime Tag.forType(T);
 
         if (!self.isCompatibleCast(tag)) {
@@ -583,6 +602,7 @@ pub const Variant = extern struct {
                         break :blk .packed_vector4_array;
                     }
                     break :blk switch (@typeInfo(T)) {
+                        .optional => |info| forType(info.child),
                         .@"enum" => .int,
                         .@"struct" => |info| if (info.backing_integer != null) .int else null,
                         .pointer => |p| if (class.isClassPtr(T)) .object else forType(p.child),
@@ -822,6 +842,60 @@ test "forType comptime" {
         const T = pair[1];
 
         try testing.expectEqual(tag, Variant.Tag.forType(T));
+    }
+}
+
+test "forType optional" {
+    const pairs = .{
+        .{ .aabb, Aabb },
+        .{ .array, Array },
+        .{ .basis, Basis },
+        .{ .callable, Callable },
+        .{ .color, Color },
+        .{ .dictionary, Dictionary },
+        .{ .node_path, NodePath },
+        .{ .object, *Object },
+        .{ .packed_byte_array, PackedByteArray },
+        .{ .packed_color_array, PackedColorArray },
+        .{ .packed_float32_array, PackedFloat32Array },
+        .{ .packed_float64_array, PackedFloat64Array },
+        .{ .packed_int32_array, PackedInt32Array },
+        .{ .packed_int64_array, PackedInt64Array },
+        .{ .packed_string_array, PackedStringArray },
+        .{ .packed_vector2_array, PackedVector2Array },
+        .{ .packed_vector3_array, PackedVector3Array },
+        .{ .plane, Plane },
+        .{ .projection, Projection },
+        .{ .quaternion, Quaternion },
+        .{ .rid, Rid },
+        .{ .rect2, Rect2 },
+        .{ .rect2i, Rect2i },
+        .{ .signal, Signal },
+        .{ .string, String },
+        .{ .string_name, StringName },
+        .{ .transform2d, Transform2d },
+        .{ .transform3d, Transform3d },
+        .{ .vector2, Vector2 },
+        .{ .vector2i, Vector2i },
+        .{ .vector3, Vector3 },
+        .{ .vector3i, Vector3i },
+        .{ .vector4, Vector4 },
+        .{ .vector4i, Vector4i },
+
+        .{ .nil, void },
+        .{ .bool, bool },
+        .{ .int, i64 },
+        .{ .float, f64 },
+        .{ .int, enum(u32) {} },
+    };
+
+    inline for (pairs) |pair| {
+        const tag = pair[0];
+        const T = pair[1];
+
+        try testing.expectEqual(tag, Variant.Tag.forType(?T));
+        try testing.expectEqual(tag, Variant.Tag.forType(?*T));
+        try testing.expectEqual(tag, Variant.Tag.forType(?*const T));
     }
 }
 
