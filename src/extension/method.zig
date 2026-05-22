@@ -14,6 +14,24 @@ const Variant = gdzig.builtin.Variant;
 
 const Registry = @import("Registry.zig");
 
+/// Returns a pointer to a StringName for the given type.
+/// For class pointer types, returns a lazily-initialized StringName with the class name.
+/// For other types, returns &StringName.empty.
+fn classNameForType(comptime T: type) *const StringName {
+    if (comptime class.isClassPtr(T)) {
+        const S = struct {
+            var name: StringName = undefined;
+            var init: bool = false;
+        };
+        if (!S.init) {
+            S.name = StringName.fromType(std.meta.Child(T));
+            S.init = true;
+        }
+        return &S.name;
+    }
+    return &StringName.empty;
+}
+
 /// Registers a method on a class.
 ///
 /// Example:
@@ -24,12 +42,29 @@ pub fn registerMethod(comptime Class: type, comptime config: MethodConfig(Class)
     var class_name: StringName = .fromType(Class);
     var method_name: StringName = .fromComptimeLatin1(config.name);
 
+    // Create runtime PropertyInfo with class_name set for class pointer types
+    var return_value: ?classdb.PropertyInfo = if (config.return_value_info) |info| blk: {
+        var info_mut = info.*;
+        if (info_mut.type == .object) {
+            info_mut.class_name = classNameForType(config.return_type);
+        }
+        break :blk info_mut;
+    } else null;
+
+    var arg_infos: [config.argument_info.len]classdb.PropertyInfo = undefined;
+    inline for (0..config.argument_info.len) |i| {
+        arg_infos[i] = config.argument_info[i];
+        if (arg_infos[i].type == .object and config.argument_types.len > 0) {
+            arg_infos[i].class_name = classNameForType(config.argument_types[i]);
+        }
+    }
+
     classdb.registerMethod(Class, void, &class_name, .{
         .name = &method_name,
         .flags = config.flags,
-        .return_value_info = config.return_value_info,
+        .return_value_info = if (return_value) |*info| @constCast(info) else null,
         .return_value_metadata = config.return_value_metadata,
-        .argument_info = config.argument_info,
+        .argument_info = &arg_infos,
         .argument_metadata = config.argument_metadata,
         .default_arguments = config.default_arguments,
     }, .{
@@ -46,6 +81,7 @@ pub fn MethodConfig(comptime Class: type) type {
         return_value_info: ?*classdb.PropertyInfo = null,
         return_value_metadata: classdb.MethodArgumentMetadata = .none,
         argument_info: []const classdb.PropertyInfo = &.{},
+        argument_types: []const type = &.{},
         argument_metadata: []const classdb.MethodArgumentMetadata = &.{},
         default_arguments: []const *const Variant = &.{},
         call: ?classdb.Call(Class, void) = null,
@@ -81,6 +117,14 @@ pub fn MethodConfig(comptime Class: type) type {
                     metas[i] = .none;
                 }
                 break :blk metas;
+            };
+
+            const arg_types: [arg_count]type = comptime blk: {
+                var types: [arg_count]type = undefined;
+                for (0..arg_count) |i| {
+                    types[i] = Args[i + 1].type.?;
+                }
+                break :blk types;
             };
 
             const Callbacks = struct {
@@ -138,6 +182,7 @@ pub fn MethodConfig(comptime Class: type) type {
                 .flags = options.flags,
                 .return_value_info = if (ReturnType != void) @constCast(&return_value) else null,
                 .argument_info = @constCast(&arg_infos),
+                .argument_types = &arg_types,
                 .argument_metadata = @constCast(&arg_metas),
                 .default_arguments = options.default_arguments,
                 .call = Callbacks.call,
