@@ -22,7 +22,7 @@ pub inline fn assumeFromUtf8(str: []const u8) String {
 /// **Since Godot 4.3**
 pub inline fn fromUtf8(cstr: []const u8) !String {
     var result: String = undefined;
-    const err = raw.stringNewWithUtf8CharsAndLen2(result.ptr(), @ptrCast(cstr.ptr), @intCast(cstr.len));
+    const err = raw.stringNewWithUtf8CharsAndLen2.?(result.ptr(), @ptrCast(cstr.ptr), @intCast(cstr.len));
     if (err != 0) {
         return error.Full;
     }
@@ -85,7 +85,7 @@ pub inline fn assumeFromUtf16(utf16: []const u16) String {
 /// **Since Godot 4.3**
 pub inline fn fromUtf16(utf16: []const u16, default_little_endian: bool) !String {
     var result: String = undefined;
-    const err = raw.stringNewWithUtf16CharsAndLen2(result.ptr(), @ptrCast(utf16.ptr), utf16.len, @intFromBool(default_little_endian));
+    const err = raw.stringNewWithUtf16CharsAndLen2.?(result.ptr(), @ptrCast(utf16.ptr), utf16.len, @intFromBool(default_little_endian));
     if (err != 0) {
         return error.Full;
     }
@@ -276,7 +276,7 @@ pub inline fn appendNullTerminatedWide(self: *String, wcstr: [*:0]const c_int) v
 ///
 /// **Since Godot 4.2**
 pub inline fn resize(self: *String, new_size: usize) void {
-    raw.stringResize(self.ptr(), @intCast(new_size));
+    raw.stringResize.?(self.ptr(), @intCast(new_size));
 }
 
 /// Gets a pointer to the UTF-32 character at the given index from this String.
