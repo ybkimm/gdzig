@@ -161,7 +161,31 @@ pub fn MethodConfig(comptime Class: type) type {
                     }
                     const result = @call(.auto, method, call_args);
                     const r = ret orelse return;
-                    @as(*ReturnType, @ptrCast(@alignCast(r))).* = result;
+                    retToPtr(ReturnType, result, r);
+                }
+
+                fn retToPtr(comptime RetType: type, value: RetType, r: *anyopaque) void {
+                    if (comptime class.isClassPtr(RetType)) {
+                        // For class pointer returns, the ptrcall ABI expects a raw engine Object
+                        // pointer in the return slot, not the Zig struct pointer.
+                        const obj: ?*gdzig.class.Object = if (@typeInfo(RetType) == .optional) blk: {
+                            if (value) |v| {
+                                if (comptime class.isRefCountedPtr(RetType)) {
+                                    _ = gdzig.class.RefCounted.upcast(v).reference();
+                                }
+                                break :blk gdzig.class.Object.upcast(v);
+                            }
+                            break :blk null;
+                        } else blk: {
+                            if (comptime class.isRefCountedPtr(RetType)) {
+                                _ = gdzig.class.RefCounted.upcast(value).reference();
+                            }
+                            break :blk gdzig.class.Object.upcast(value);
+                        };
+                        @as(*?*gdzig.class.Object, @ptrCast(@alignCast(r))).* = obj;
+                        return;
+                    }
+                    @as(*RetType, @ptrCast(@alignCast(r))).* = value;
                 }
 
                 fn ptrToArg(comptime ArgType: type, p_arg: *const anyopaque) ArgType {
